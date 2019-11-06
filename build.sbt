@@ -29,7 +29,7 @@ lazy val core = project
     quasarPluginQuasarVersion := QuasarVersion,
     quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
     quasarPluginDependencies ++= Seq(
-      "net.snowflake" % "snowflake-jdbc" % "3.10.0",
+      "net.snowflake" % "snowflake-jdbc" % "3.10.1",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion))
   .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)

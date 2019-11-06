@@ -58,5 +58,5 @@ object SnowflakeConfig {
     )("accountName", "user", "password", "databaseName", "schema", "warehouse")
 
   def configToUri(config: SnowflakeConfig): String =
-    s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}"
+    s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/?db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}"
 }
