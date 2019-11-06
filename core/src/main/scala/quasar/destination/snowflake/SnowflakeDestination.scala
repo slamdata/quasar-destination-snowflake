@@ -16,26 +16,58 @@
 
 package quasar.destination.snowflake
 
-import slamdata.Predef._
+import scala.Predef._
+import scala.Byte
 
 import quasar.api.destination.{Destination, DestinationType, ResultSink}
-import quasar.connector.MonadResourceErr
+import quasar.api.push.RenderConfig
+import quasar.api.resource.ResourcePath
+import quasar.connector.{MonadResourceErr, ResourceError}
 
-import cats.effect.{Effect, Timer}
+import cats.effect._
+import cats.implicits._
 
 import doobie.Transactor
 
-import eu.timepit.refined.auto._
+import fs2._
+
+import java.io.InputStream
+
+import net.snowflake.client.jdbc.SnowflakeConnection
+
+import pathy.Path, Path.FileName
 
 import scalaz.NonEmptyList
 
-final class SnowflakeDestination[F[_]: Effect: MonadResourceErr: Timer](
+final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer](
   xa: Transactor[F]) extends Destination[F] {
   def destinationType: DestinationType =
-    DestinationType("snowflake", 1L)
+    SnowflakeDestinationModule.destinationType
 
   def sinks: NonEmptyList[ResultSink[F]] =
     NonEmptyList(csvSink)
 
-  private val csvSink: ResultSink.Csv[F] = ???
+  private val csvSink: ResultSink[F] = ResultSink.csv[F](RenderConfig.Csv()) {
+    case (path, columns, bytes) =>
+      for {
+        inputStream <- (io.toInputStream[F]: Pipe[F, Byte, InputStream])(bytes)
+        fileName <- Stream.eval(ensureSingleSegment(path))
+        connection <- Stream.resource(snowflakeConnection(xa))
+        _ <- Stream.eval(Sync[F].delay(connection.uploadStream("@~", "/", inputStream, fileName.value, true)))
+      } yield ()
+  }
+
+  // we need to retrieve a SnowflakeConnection from the Hikari transactor.
+  // this is the recommended way to access Snowflake-specific methods
+  // https://docs.snowflake.net/manuals/user-guide/jdbc-using.html#unwrapping-snowflake-specific-classes
+  private def snowflakeConnection(xa: Transactor[F]): Resource[F, SnowflakeConnection] =
+    xa.connect(xa.kernel).map(_.unwrap(classOf[SnowflakeConnection]))
+
+  private def ensureSingleSegment(r: ResourcePath): F[FileName] =
+    r.fold(file =>
+      if (Path.depth(file) === 1)
+        Path.fileName(file).pure[F]
+      else
+        MonadResourceErr[F].raiseError(ResourceError.notAResource(r)),
+      MonadResourceErr[F].raiseError(ResourceError.notAResource(r)))
 }

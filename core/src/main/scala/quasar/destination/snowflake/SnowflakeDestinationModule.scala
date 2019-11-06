@@ -16,7 +16,8 @@
 
 package quasar.destination.snowflake
 
-import slamdata.Predef._
+import scala.Predef._
+import scala._
 
 import quasar.api.destination.DestinationError.InitializationError
 import quasar.api.destination.{Destination, DestinationError, DestinationType}
