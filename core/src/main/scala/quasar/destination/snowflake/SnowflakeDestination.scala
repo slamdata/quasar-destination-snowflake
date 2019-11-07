@@ -17,7 +17,7 @@
 package quasar.destination.snowflake
 
 import scala.Predef._
-import scala.{Boolean, Byte, StringContext, Unit}
+import scala.{Boolean, Byte, StringContext, Unit, List}
 
 import quasar.api.destination.{Destination, DestinationType, ResultSink}
 import quasar.api.push.RenderConfig
@@ -34,6 +34,8 @@ import doobie.implicits._
 
 import fs2._
 
+import org.slf4s.Logging
+
 import java.io.InputStream
 import java.lang.Exception
 import java.util.UUID
@@ -47,7 +49,7 @@ import scalaz.NonEmptyList
 import shims._
 
 final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer](xa: Transactor[F])
-    extends Destination[F] {
+    extends Destination[F] with Logging {
   def destinationType: DestinationType =
     SnowflakeDestinationModule.destinationType
 
@@ -58,38 +60,52 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
   private val csvSink: ResultSink[F] = ResultSink.csv[F](RenderConfig.Csv()) {
     case (path, columns, bytes) =>
-      for {
-        inputStream <- (io.toInputStream[F]: Pipe[F, Byte, InputStream])(bytes)
-        fileName <- Stream.eval(ensureSingleSegment(path))
-
-        connection <- Stream.resource(snowflakeConnection(xa))
-
-        freshName0 <- Stream.eval(Sync[F].delay(UUID.randomUUID().toString))
-        freshName = s"reform-$freshName0"
-
-        _ <- Stream.eval(
-          Sync[F].delay(connection.uploadStream("@~", "/", inputStream, freshName, Compressed)))
-
-        cols0 <- columns.toNel.fold[Stream[F, NonEmptyList[TableColumn]]](
-          Stream.raiseError[F](new Exception("No columns specified")))(
-          _.asScalaz.pure[Stream[F, ?]])
-
-        cols <- cols0.traverse(mkColumn(_)).fold(
-          errs => Stream.raiseError[F](
-            new Exception(s"Some column types are not supported: ${mkErrorString(errs.asScalaz)}")),
-          c => Stream(c).covaryAll[F, NonEmptyList[Fragment]])
-
-        tableQuery = createTableQuery(fileName.value, cols).query[Unit]
-        loadQuery = loadTableQuery(freshName, fileName.value, Compressed).query[Unit]
-
-        _ = println(s"Cols: \n $cols \n")
-        _ = println(s"Table query: \n ${tableQuery.sql} \n")
-        _ = println(s"Load query:\n ${loadQuery.sql} \n")
-
-        _ <- (tableQuery.stream ++ loadQuery.stream).transact(xa)
-
-      } yield ()
+      Stream.force(
+        for {
+          freshName0 <- Sync[F].delay(UUID.randomUUID().toString)
+          freshName = s"reform-$freshName0"
+          push = doPush(path, columns, bytes, freshName).onFinalize(removeFile(freshName))
+        } yield push)
   }
+
+  private def removeFile(fileName: String): F[Unit] =
+    (fr0"rm @~/" ++ Fragment.const(escapeString(fileName)))
+      .query[Unit].stream.transact(xa).compile.drain
+
+  private def doPush(
+    path: ResourcePath,
+    columns: List[TableColumn],
+    bytes: Stream[F, Byte],
+    freshName: String)
+      : Stream[F, Unit] =
+    for {
+      inputStream <- (io.toInputStream[F]: Pipe[F, Byte, InputStream])(bytes)
+      fileName <- Stream.eval(ensureSingleSegment(path))
+
+      connection <- Stream.resource(snowflakeConnection(xa))
+
+      _ <- Stream.eval(
+        Sync[F].delay(connection.uploadStream("@~", "/", inputStream, freshName, Compressed)))
+
+      cols0 <- columns.toNel.fold[Stream[F, NonEmptyList[TableColumn]]](
+        Stream.raiseError[F](new Exception("No columns specified")))(
+        _.asScalaz.pure[Stream[F, ?]])
+
+      cols <- cols0.traverse(mkColumn(_)).fold(
+        errs => Stream.raiseError[F](
+          new Exception(s"Some column types are not supported: ${mkErrorString(errs.asScalaz)}")),
+        c => Stream(c).covaryAll[F, NonEmptyList[Fragment]])
+
+      tableQuery = createTableQuery(fileName.value, cols).query[Unit]
+      loadQuery = loadTableQuery(freshName, fileName.value, Compressed).query[Unit]
+
+      _ = println(s"Cols: \n $cols \n")
+      _ = println(s"Table query: \n ${tableQuery.sql} \n")
+      _ = println(s"Load query:\n ${loadQuery.sql} \n")
+
+      _ <- (tableQuery.stream ++ loadQuery.stream).transact(xa)
+
+    } yield ()
 
   private def loadTableQuery(stagedFile: String, tableName: String, compressed: Boolean): Fragment = {
     val fileToLoad =
@@ -107,6 +123,9 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
   private def escapeString(str: String): String =
     s"""${str.replace("\"", "\"\"")}"""
+
+  private def quoteEscapeString(str: String): String =
+    s""""${str.replace("\"", "\"\"")}""""
 
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
     errs.map(_.show).intercalate(", ")
@@ -131,7 +150,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       columns.intercalate(fr", "))
 
   private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
-    columnTypeToSnowflake(c.tpe).map(Fragment.const(escapeString(c.name)) ++ _)
+    columnTypeToSnowflake(c.tpe).map(Fragment.const(quoteEscapeString(c.name)) ++ _)
 
   private def columnTypeToSnowflake(ct: ColumnType.Scalar)
       : ValidatedNel[ColumnType.Scalar, Fragment] =
