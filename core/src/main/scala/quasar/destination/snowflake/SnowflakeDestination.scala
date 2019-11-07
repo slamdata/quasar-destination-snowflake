@@ -17,7 +17,7 @@
 package quasar.destination.snowflake
 
 import scala.Predef._
-import scala.{Byte, StringContext, Unit}
+import scala.{Byte, StringContext}
 
 import quasar.api.destination.{Destination, DestinationType, ResultSink}
 import quasar.api.push.RenderConfig
@@ -73,15 +73,20 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
             new Exception(s"Some column types are not supported: ${mkErrorString(errs.asScalaz)}")),
           c => Stream(c).covaryAll[F, NonEmptyList[Fragment]])
 
-        tableQuery = createTableQuery(fileName.dropExtension.value, cols).query[Unit]
+        tableQuery = createTableQuery(fileName.dropExtension.value, cols).query[String]
 
         _ = println(s"Cols: \n $cols \n")
         _ = println(s"Query: \n ${tableQuery.sql} \n")
 
-        _ <- tableQuery.stream.transact(xa)
+        createReturn <- tableQuery.stream.transact(xa)
+
+        _ = println(s"Create return: $createReturn")
 
       } yield ()
   }
+
+  private def escapeString(str: String): String =
+    s""""${str.replace("\"", "\"\"")}""""
 
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
     errs.map(_.show).intercalate(", ")
@@ -102,11 +107,11 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       MonadResourceErr[F].raiseError(ResourceError.notAResource(r)))
 
   private def createTableQuery(tableName: String, columns: NonEmptyList[Fragment]): Fragment =
-    (fr"CREATE TABLE " ++ Fragment.const(tableName)) ++ Fragments.parentheses(
+    (fr"CREATE TABLE " ++ Fragment.const(escapeString(tableName))) ++ Fragments.parentheses(
       columns.intercalate(fr", "))
 
   private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
-    columnTypeToSnowflake(c.tpe).map(Fragment.const(c.name) ++ _)
+    columnTypeToSnowflake(c.tpe).map(Fragment.const(escapeString(c.name)) ++ _)
 
   private def columnTypeToSnowflake(ct: ColumnType.Scalar)
       : ValidatedNel[ColumnType.Scalar, Fragment] =
