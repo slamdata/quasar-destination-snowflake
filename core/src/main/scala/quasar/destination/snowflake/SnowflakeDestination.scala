@@ -122,8 +122,11 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       fr"file_format = (type = csv, skip_header = 1)"
   }
 
+  // Double quote the string and remove any stray double quotes inside
+  // the string, they can't be part of valid identifiers in Snowflake
+  // anyway.
   private def escapeString(str: String): String =
-    s""""${str.replace("\"", "\"\"")}""""
+    s""""${str.replace("\"", "")}""""
 
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
     errs.map(_.show).intercalate(", ")

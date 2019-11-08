@@ -16,7 +16,8 @@
 
 package quasar.destination.snowflake
 
-import slamdata.Predef._
+import scala.Predef._
+import scala.StringContext
 
 import argonaut._, Argonaut._
 
