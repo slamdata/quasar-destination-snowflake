@@ -27,7 +27,7 @@ import quasar.concurrent.NamedDaemonThreadFactory
 import java.util.concurrent.Executors
 
 import scala.concurrent.ExecutionContext
-import scala.util.Either
+import scala.util.{Either, Random}
 
 import argonaut._, Argonaut._
 
@@ -55,8 +55,9 @@ object SnowflakeDestinationModule extends DestinationModule {
       config <- EitherT.fromEither[Resource[F, ?]](config.as[SnowflakeConfig].result) leftMap {
         case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
       }
-      connectPool <- EitherT.right[InitializationError[Json]](mkPool("snowflake-dest-connect"))
-      transactPool <- EitherT.right[InitializationError[Json]](mkPool("snowflake-dest-transact"))
+      poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
+      connectPool <- EitherT.right(mkPool(s"snowflake-dest-connect-$poolSuffix"))
+      transactPool <- EitherT.right(mkPool(s"snowflake-dest-transact-$poolSuffix"))
       jdbcUri = SnowflakeConfig.configToUri(config)
       transactor <- EitherT.right[InitializationError[Json]](
         HikariTransactor.newHikariTransactor(

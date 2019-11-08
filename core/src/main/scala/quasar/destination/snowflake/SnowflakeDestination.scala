@@ -165,6 +165,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       case ColumnType.LocalDateTime => fr0"TIMESTAMP_NTZ".validNel
       case ColumnType.OffsetDateTime => fr0"TIMESTAMP_TZ".validNel
       case i @ ColumnType.Interval => i.invalidNel
+      // this is an arbitrary precision and scale
       case ColumnType.Number => fr0"NUMBER(33, 3)".validNel
       case ColumnType.String => fr0"STRING".validNel
     }
