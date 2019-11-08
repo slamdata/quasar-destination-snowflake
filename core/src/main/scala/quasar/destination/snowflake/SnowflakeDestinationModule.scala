@@ -44,7 +44,6 @@ object SnowflakeDestinationModule extends DestinationModule {
 
   val SnowflakeDriverFqcn = "net.snowflake.client.jdbc.SnowflakeDriver"
   val Redacted = "<REDACTED>"
-  val ConnectionPoolSize: Int = 10
 
   def sanitizeDestinationConfig(config: Json): Json =
     config.as[SnowflakeConfig].result.fold(_ => Json.jEmptyObject, cfg =>

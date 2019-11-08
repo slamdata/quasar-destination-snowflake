@@ -32,5 +32,7 @@ lazy val core = project
       "org.slf4s" %% "slf4s-api" % "1.7.25",
       "net.snowflake" % "snowflake-jdbc" % "3.10.1",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
-      "org.tpolecat" %% "doobie-hikari" % DoobieVersion))
+      "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
+    libraryDependencies ++= Seq(
+      "org.specs2" %% "specs2-core" % "4.7.0" % Test))
   .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
