@@ -69,7 +69,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
   }
 
   private def removeFile(fileName: String): F[Unit] =
-    (fr0"rm @~/" ++ Fragment.const(escapeString(fileName)))
+    (fr0"rm @~/" ++ Fragment.const(fileName)) // no risk of injection here since this is fresh name
       .query[Unit].stream.transact(xa).compile.drain
 
   private def doPush(
@@ -81,6 +81,8 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     for {
       inputStream <- (io.toInputStream[F]: Pipe[F, Byte, InputStream])(bytes)
       fileName <- Stream.eval(ensureSingleSegment(path))
+
+      _ <- debug(s"Finished staging to file: @~/${fileName.value}")
 
       connection <- Stream.resource(snowflakeConnection(xa))
 
@@ -99,9 +101,8 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       tableQuery = createTableQuery(fileName.value, cols).query[Unit]
       loadQuery = loadTableQuery(freshName, fileName.value, Compressed).query[Unit]
 
-      _ = println(s"Cols: \n $cols \n")
-      _ = println(s"Table query: \n ${tableQuery.sql} \n")
-      _ = println(s"Load query:\n ${loadQuery.sql} \n")
+      _ <- debug(s"Table creation query:\n ${tableQuery.sql}")
+      _ <- debug(s"Load query:\n ${loadQuery.sql}")
 
       _ <- (tableQuery.stream ++ loadQuery.stream).transact(xa)
 
@@ -115,16 +116,13 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
         stagedFile
 
     fr"COPY INTO" ++
-      Fragment.const(tableName) ++
+      Fragment.const(escapeString(tableName)) ++
       fr0" FROM @~/" ++
-      Fragment.const(fileToLoad) ++
+      Fragment.const(fileToLoad) ++ // no risk of injection here since this is fresh name
       fr"file_format = (type = csv, skip_header = 1)"
   }
 
   private def escapeString(str: String): String =
-    s"""${str.replace("\"", "\"\"")}"""
-
-  private def quoteEscapeString(str: String): String =
     s""""${str.replace("\"", "\"\"")}""""
 
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
@@ -150,7 +148,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       columns.intercalate(fr", "))
 
   private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
-    columnTypeToSnowflake(c.tpe).map(Fragment.const(quoteEscapeString(c.name)) ++ _)
+    columnTypeToSnowflake(c.tpe).map(Fragment.const(escapeString(c.name)) ++ _)
 
   private def columnTypeToSnowflake(ct: ColumnType.Scalar)
       : ValidatedNel[ColumnType.Scalar, Fragment] =
@@ -167,4 +165,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       case ColumnType.Number => fr0"NUMBER(33, 3)".validNel
       case ColumnType.String => fr0"STRING".validNel
     }
+
+  private def debug(msg: String): Stream[F, Unit] =
+    Stream.eval(Sync[F].delay(log.debug(msg)))
 }
