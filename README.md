@@ -5,3 +5,24 @@
 ```sbt
 libraryDependencies += "com.slamdata" %% "quasar-destination-snowflake" % <version>
 ```
+
+## Configuration
+
+```json
+{
+   accountName: String,
+   warehouse: String,
+   databaseName: String,
+   user: String,
+   password: String,
+   schema: String
+}
+```
+
+- `accountName` the name of the Snowflake account. `name` in `<name>.snowflakecomputing.com`
+- `warehouse` the name of the warehouse to use
+- `databaseName` the name of the database to use
+- `user` the user name to login into Snowflake
+- `password` the password to login into Snowflake
+
+All fields are mandatory.

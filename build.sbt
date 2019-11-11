@@ -10,6 +10,9 @@ scmInfo in ThisBuild := Some(ScmInfo(
 lazy val publishTestsSettings = Seq(
   Test / packageBin / publishArtifact := true)
 
+lazy val QuasarVersion = IO.read(file("./quasar-version")).trim
+val DoobieVersion = "0.7.0"
+
 lazy val root = project
   .in(file("."))
   .settings(noPublishSettings)
@@ -21,5 +24,15 @@ lazy val core = project
   .settings(name := "quasar-destination-snowflake")
   .settings(
     performMavenCentralSync := false,
-    publishAsOSSProject := false)
-  .enablePlugins(AutomateHeaderPlugin)
+    publishAsOSSProject := true,
+    quasarPluginName := "snowflake",
+    quasarPluginQuasarVersion := QuasarVersion,
+    quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
+    quasarPluginDependencies ++= Seq(
+      "org.slf4s" %% "slf4s-api" % "1.7.25",
+      "net.snowflake" % "snowflake-jdbc" % "3.10.1",
+      "org.tpolecat" %% "doobie-core" % DoobieVersion,
+      "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
+    libraryDependencies ++= Seq(
+      "org.specs2" %% "specs2-core" % "4.7.0" % Test))
+  .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
