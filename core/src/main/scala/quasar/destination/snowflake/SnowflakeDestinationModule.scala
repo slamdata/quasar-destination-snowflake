@@ -44,6 +44,7 @@ object SnowflakeDestinationModule extends DestinationModule {
 
   val SnowflakeDriverFqcn = "net.snowflake.client.jdbc.SnowflakeDriver"
   val Redacted = "<REDACTED>"
+  val PoolSize: Int = 10
 
   def sanitizeDestinationConfig(config: Json): Json =
     config.as[SnowflakeConfig].result.fold(_ => Json.jEmptyObject, cfg =>
@@ -56,8 +57,8 @@ object SnowflakeDestinationModule extends DestinationModule {
         case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
       }
       poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
-      connectPool <- EitherT.right(mkPool(s"snowflake-dest-connect-$poolSuffix"))
-      transactPool <- EitherT.right(mkPool(s"snowflake-dest-transact-$poolSuffix"))
+      connectPool <- EitherT.right(boundedPool(s"snowflake-dest-connect-$poolSuffix", PoolSize))
+      transactPool <- EitherT.right(unboundedPool(s"snowflake-dest-transact-$poolSuffix"))
       jdbcUri = SnowflakeConfig.configToUri(config)
       transactor <- EitherT.right[InitializationError[Json]](
         HikariTransactor.newHikariTransactor(
@@ -70,10 +71,19 @@ object SnowflakeDestinationModule extends DestinationModule {
       destination: Destination[F] = new SnowflakeDestination[F](transactor)
     } yield destination).value
 
-  private def mkPool[F[_]: Sync](name: String): Resource[F, ExecutionContext] =
+  private def boundedPool[F[_]: Sync](name: String, threadCount: Int): Resource[F, ExecutionContext] =
+    Resource.make(
+      Sync[F].delay(
+        Executors.newFixedThreadPool(
+          threadCount,
+          NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
+      .map(ExecutionContext.fromExecutor(_))
+
+  private def unboundedPool[F[_]: Sync](name: String): Resource[F, ExecutionContext] =
     Resource.make(
       Sync[F].delay(
         Executors.newCachedThreadPool(
           NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
       .map(ExecutionContext.fromExecutor(_))
+
 }
