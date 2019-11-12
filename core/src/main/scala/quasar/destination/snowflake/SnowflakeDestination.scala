@@ -21,7 +21,7 @@ import scala.{Boolean, Byte, StringContext, Unit, List}
 
 import quasar.api.destination.{Destination, DestinationType, ResultSink}
 import quasar.api.push.RenderConfig
-import quasar.api.resource.ResourcePath
+import quasar.api.resource._
 import quasar.api.table.{ColumnType, TableColumn}
 import quasar.connector.{MonadResourceErr, ResourceError}
 
@@ -36,7 +36,6 @@ import fs2._
 
 import org.slf4s.Logging
 
-import java.io.InputStream
 import java.lang.Exception
 import java.util.UUID
 
@@ -62,8 +61,8 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     case (path, columns, bytes) =>
       Stream.force(
         for {
-          freshName0 <- Sync[F].delay(UUID.randomUUID().toString)
-          freshName = s"reform-$freshName0"
+          freshNameSuffix <- Sync[F].delay(UUID.randomUUID().toString)
+          freshName = s"reform-$freshNameSuffix"
           push = doPush(path, columns, bytes, freshName).onFinalize(removeFile(freshName))
         } yield push)
   }
@@ -79,15 +78,17 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     freshName: String)
       : Stream[F, Unit] =
     for {
-      inputStream <- (io.toInputStream[F]: Pipe[F, Byte, InputStream])(bytes)
       fileName <- Stream.eval(ensureSingleSegment(path))
 
-      _ <- debug(s"Finished staging to file: @~/${fileName.value}")
-
+      inputStream <- bytes.through(io.toInputStream)
       connection <- Stream.resource(snowflakeConnection(xa))
+
+      _ <- debug(s"Starting staging to file: @~/$freshName")
 
       _ <- Stream.eval(
         Sync[F].delay(connection.uploadStream("@~", "/", inputStream, freshName, Compressed)))
+
+      _ <- debug(s"Finished staging to file: @~/$freshName")
 
       cols0 <- columns.toNel.fold[Stream[F, NonEmptyList[TableColumn]]](
         Stream.raiseError[F](new Exception("No columns specified")))(
@@ -98,13 +99,17 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
           new Exception(s"Some column types are not supported: ${mkErrorString(errs.asScalaz)}")),
         c => Stream(c).covaryAll[F, NonEmptyList[Fragment]])
 
-      tableQuery = createTableQuery(fileName.value, cols).query[Unit]
-      loadQuery = loadTableQuery(freshName, fileName.value, Compressed).query[Unit]
+      tableQuery = createTableQuery(fileName.value, cols).query[String]
+      loadQuery = loadTableQuery(freshName, fileName.value, Compressed).query[String]
 
-      _ <- debug(s"Table creation query:\n ${tableQuery.sql}")
-      _ <- debug(s"Load query:\n ${loadQuery.sql}")
+      _ <- debug(s"Table creation query:\n${tableQuery.sql}")
+      _ <- debug(s"Load query:\n${loadQuery.sql}")
 
-      _ <- (tableQuery.stream ++ loadQuery.stream).transact(xa)
+      createTableResponse <- tableQuery.stream.transact(xa)
+      loadTableResponse <- loadQuery.stream.transact(xa)
+
+      _ <- debug(s"Create table response: $createTableResponse")
+      _ <- debug(s"Load table response: $loadTableResponse")
 
     } yield ()
 
@@ -119,7 +124,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       Fragment.const(escapeString(tableName)) ++
       fr0" FROM @~/" ++
       Fragment.const(fileToLoad) ++ // no risk of injection here since this is fresh name
-      fr"file_format = (type = csv, skip_header = 1)"
+      fr"""file_format = (type = csv, skip_header = 1, field_optionally_enclosed_by = '"')"""
   }
 
   // Double quote the string and remove any stray double quotes inside
@@ -138,13 +143,10 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     xa.connect(xa.kernel).map(_.unwrap(classOf[SnowflakeConnection]))
 
   private def ensureSingleSegment(r: ResourcePath): F[FileName] =
-    r.fold(
-      file =>
-        if (Path.depth(file) === 1)
-          Path.fileName(file).pure[F]
-        else
-          MonadResourceErr[F].raiseError(ResourceError.notAResource(r)),
-      MonadResourceErr[F].raiseError(ResourceError.notAResource(r)))
+    r match {
+      case file /: ResourcePath.Root => FileName(file).pure[F]
+      case _ => MonadResourceErr[F].raiseError(ResourceError.notAResource(r))
+    }
 
   private def createTableQuery(tableName: String, columns: NonEmptyList[Fragment]): Fragment =
     (fr"CREATE OR REPLACE TABLE" ++ Fragment.const(escapeString(tableName))) ++ Fragments.parentheses(
