@@ -147,7 +147,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       MonadResourceErr[F].raiseError(ResourceError.notAResource(r)))
 
   private def createTableQuery(tableName: String, columns: NonEmptyList[Fragment]): Fragment =
-    (fr"CREATE TABLE" ++ Fragment.const(escapeString(tableName))) ++ Fragments.parentheses(
+    (fr"CREATE OR REPLACE TABLE" ++ Fragment.const(escapeString(tableName))) ++ Fragments.parentheses(
       columns.intercalate(fr", "))
 
   private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
