@@ -24,5 +24,6 @@ libraryDependencies += "com.slamdata" %% "quasar-destination-snowflake" % <versi
 - `databaseName` the name of the database to use
 - `user` the user name to login into Snowflake
 - `password` the password to login into Snowflake
+- `schema` the name of the schema to use
 
 All fields are mandatory.
