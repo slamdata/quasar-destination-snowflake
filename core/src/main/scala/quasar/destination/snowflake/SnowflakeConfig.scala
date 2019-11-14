@@ -17,7 +17,7 @@
 package quasar.destination.snowflake
 
 import scala.Predef._
-import scala.StringContext
+import scala.{Option, StringContext}
 
 import argonaut._, Argonaut._
 
@@ -40,21 +40,21 @@ final case class SnowflakeConfig(
 
 object SnowflakeConfig {
   implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
-    casecodec6[String, String, String, String, String, String, SnowflakeConfig](
+    casecodec6[String, String, String, String, Option[String], String, SnowflakeConfig](
       (an, usr, pass, dbName, schema, wh) =>
         SnowflakeConfig(
           AccountName(an),
           User(usr),
           Password(pass),
           DatabaseName(dbName),
-          Schema(schema),
+          Schema(schema.getOrElse("public")),
           Warehouse(wh)),
       cfg =>
         (cfg.accountName.value,
           cfg.user.value,
           cfg.password.value,
           cfg.databaseName.value,
-          cfg.schema.value,
+          cfg.schema.value.some,
           cfg.warehouse.value).some
     )("accountName", "user", "password", "databaseName", "schema", "warehouse")
 
