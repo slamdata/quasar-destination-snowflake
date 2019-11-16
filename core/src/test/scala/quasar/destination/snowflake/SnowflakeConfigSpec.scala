@@ -40,6 +40,24 @@ object SnowflakeConfigSpec extends Specification {
           Schema("public"),
           Warehouse("warehouse name")))
     }
+
+    "schema defaults to public when not specified" >> {
+      val testConfig = Json.obj(
+        "accountName" := "foo",
+        "user" := "bar",
+        "password" := "secret password",
+        "databaseName" := "db name",
+        "warehouse" := "warehouse name")
+
+      testConfig.as[SnowflakeConfig].result must beRight(
+        SnowflakeConfig(
+          AccountName("foo"),
+          User("bar"),
+          Password("secret password"),
+          DatabaseName("db name"),
+          Schema("public"),
+          Warehouse("warehouse name")))
+    }
   }
 
   "configToUri" >> {
