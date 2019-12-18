@@ -30,6 +30,7 @@ import cats.data._
 import cats.implicits._
 
 import doobie._
+import doobie.free.connection.unwrap
 import doobie.implicits._
 
 import fs2._
@@ -47,8 +48,9 @@ import scalaz.NonEmptyList
 
 import shims._
 
-final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer](xa: Transactor[F])
-    extends Destination[F] with Logging {
+final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer](
+  xa: Transactor[F],
+  identCfg: SanitizeIdentifiers) extends Destination[F] with Logging {
   def destinationType: DestinationType =
     SnowflakeDestinationModule.destinationType
 
@@ -81,7 +83,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       fileName <- Stream.eval(ensureSingleSegment(path))
 
       inputStream <- bytes.through(io.toInputStream)
-      connection <- Stream.resource(snowflakeConnection(xa))
+      connection <- Stream.eval(snowflakeConnection.transact(xa))
 
       _ <- debug(s"Starting staging to file: @~/$freshName")
 
@@ -121,26 +123,20 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
         stagedFile
 
     fr"COPY INTO" ++
-      Fragment.const(escapeString(tableName)) ++
+      Fragment.const(QueryGen.sanitizeIdentifier(tableName, identCfg)) ++
       fr0" FROM @~/" ++
       Fragment.const(fileToLoad) ++ // no risk of injection here since this is fresh name
       fr"""file_format = (type = csv, skip_header = 1, field_optionally_enclosed_by = '"')"""
   }
 
-  // Double quote the string and remove any stray double quotes inside
-  // the string, they can't be part of valid identifiers in Snowflake
-  // anyway.
-  private def escapeString(str: String): String =
-    s""""${str.replace("\"", "")}""""
-
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
     errs.map(_.show).intercalate(", ")
 
-  // we need to retrieve a SnowflakeConnection from the Hikari transactor.
+  // we need to retrieve a SnowflakeConnection
   // this is the recommended way to access Snowflake-specific methods
   // https://docs.snowflake.net/manuals/user-guide/jdbc-using.html#unwrapping-snowflake-specific-classes
-  private def snowflakeConnection(xa: Transactor[F]): Resource[F, SnowflakeConnection] =
-    xa.connect(xa.kernel).map(_.unwrap(classOf[SnowflakeConnection]))
+  private def snowflakeConnection: ConnectionIO[SnowflakeConnection] =
+    unwrap(classOf[SnowflakeConnection])
 
   private def ensureSingleSegment(r: ResourcePath): F[FileName] =
     r match {
@@ -149,11 +145,13 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     }
 
   private def createTableQuery(tableName: String, columns: NonEmptyList[Fragment]): Fragment =
-    (fr"CREATE OR REPLACE TABLE" ++ Fragment.const(escapeString(tableName))) ++ Fragments.parentheses(
-      columns.intercalate(fr", "))
+    (fr"CREATE OR REPLACE TABLE" ++
+      Fragment.const(QueryGen.sanitizeIdentifier(tableName, identCfg))) ++
+      Fragments.parentheses(columns.intercalate(fr", "))
 
   private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
-    columnTypeToSnowflake(c.tpe).map(Fragment.const(escapeString(c.name)) ++ _)
+    columnTypeToSnowflake(c.tpe)
+      .map(Fragment.const(QueryGen.sanitizeIdentifier(c.name, identCfg)) ++ _)
 
   private def columnTypeToSnowflake(ct: ColumnType.Scalar)
       : ValidatedNel[ColumnType.Scalar, Fragment] =
