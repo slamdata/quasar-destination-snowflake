@@ -80,7 +80,7 @@ object SnowflakeDestinationModule extends DestinationModule {
 
       _ <- isLive(transactor, config)
 
-      destination: Destination[F] = new SnowflakeDestination[F](transactor)
+      destination: Destination[F] = new SnowflakeDestination[F](transactor, cfg.sanitizeIdentifiers)
     } yield destination).value
 
   private def isLive[F[_]: Sync](xa: Transactor[F], config: Json)

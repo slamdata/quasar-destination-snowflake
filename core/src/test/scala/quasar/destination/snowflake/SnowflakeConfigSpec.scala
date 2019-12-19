@@ -29,7 +29,8 @@ object SnowflakeConfigSpec extends Specification {
         "password" := "secret password",
         "databaseName" := "db name",
         "schema" := "public",
-        "warehouse" := "warehouse name")
+        "warehouse" := "warehouse name",
+        "sanitizeIdentifiers" := "false")
 
       testConfig.as[SnowflakeConfig].result must beRight(
         SnowflakeConfig(
@@ -38,15 +39,17 @@ object SnowflakeConfigSpec extends Specification {
           Password("secret password"),
           DatabaseName("db name"),
           Schema("public"),
-          Warehouse("warehouse name")))
+          Warehouse("warehouse name"),
+          SanitizeIdentifiers(false)))
     }
 
-    "schema defaults to public when not specified" >> {
+    "defaults 'sanitizeIdentifiers' to true when not specified" >> {
       val testConfig = Json.obj(
         "accountName" := "foo",
         "user" := "bar",
         "password" := "secret password",
         "databaseName" := "db name",
+        "schema" := "public",
         "warehouse" := "warehouse name")
 
       testConfig.as[SnowflakeConfig].result must beRight(
@@ -56,7 +59,28 @@ object SnowflakeConfigSpec extends Specification {
           Password("secret password"),
           DatabaseName("db name"),
           Schema("public"),
-          Warehouse("warehouse name")))
+          Warehouse("warehouse name"),
+          SanitizeIdentifiers(true)))
+    }
+
+    "defaults 'schema' to 'public' when not specified" >> {
+      val testConfig = Json.obj(
+        "accountName" := "foo",
+        "user" := "bar",
+        "password" := "secret password",
+        "databaseName" := "db name",
+        "warehouse" := "warehouse name",
+        "sanitizeIdentifiers" := "true")
+
+      testConfig.as[SnowflakeConfig].result must beRight(
+        SnowflakeConfig(
+          AccountName("foo"),
+          User("bar"),
+          Password("secret password"),
+          DatabaseName("db name"),
+          Schema("public"),
+          Warehouse("warehouse name"),
+          SanitizeIdentifiers(true)))
     }
   }
 
@@ -69,7 +93,8 @@ object SnowflakeConfigSpec extends Specification {
           Password("secret"),
           DatabaseName("db name"),
           Schema("public"),
-          Warehouse("warehouse name"))
+          Warehouse("warehouse name"),
+          SanitizeIdentifiers(true))
 
       SnowflakeConfig.configToUri(testConfig).contains("secret") must beFalse
       SnowflakeConfig.configToUri(testConfig).contains("bar") must beFalse

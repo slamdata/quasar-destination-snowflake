@@ -17,7 +17,7 @@
 package quasar.destination.snowflake
 
 import scala.Predef._
-import scala.{Option, StringContext}
+import scala._
 
 import argonaut._, Argonaut._
 
@@ -30,33 +30,38 @@ final case class DatabaseName(value: String)
 final case class Schema(value: String)
 final case class Warehouse(value: String)
 
+final case class SanitizeIdentifiers(value: Boolean)
+
 final case class SnowflakeConfig(
   accountName: AccountName,
   user: User,
   password: Password,
   databaseName: DatabaseName,
   schema: Schema,
-  warehouse: Warehouse)
+  warehouse: Warehouse,
+  sanitizeIdentifiers: SanitizeIdentifiers)
 
 object SnowflakeConfig {
   implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
-    casecodec6[String, String, String, String, Option[String], String, SnowflakeConfig](
-      (an, usr, pass, dbName, schema, wh) =>
+    casecodec7[String, String, String, String, Option[String], String, Option[Boolean], SnowflakeConfig](
+      (an, usr, pass, dbName, schema, wh, sanitize) =>
         SnowflakeConfig(
           AccountName(an),
           User(usr),
           Password(pass),
           DatabaseName(dbName),
           Schema(schema.getOrElse("public")),
-          Warehouse(wh)),
+          Warehouse(wh),
+          sanitize.map(SanitizeIdentifiers(_)).getOrElse(SanitizeIdentifiers(true))),
       cfg =>
         (cfg.accountName.value,
           cfg.user.value,
           cfg.password.value,
           cfg.databaseName.value,
           cfg.schema.value.some,
-          cfg.warehouse.value).some
-    )("accountName", "user", "password", "databaseName", "schema", "warehouse")
+          cfg.warehouse.value,
+          cfg.sanitizeIdentifiers.value.some).some
+    )("accountName", "user", "password", "databaseName", "schema", "warehouse", "sanitizeIdentifiers")
 
   def configToUri(config: SnowflakeConfig): String =
     s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/?db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}"
