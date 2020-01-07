@@ -18,11 +18,14 @@ package quasar.destination.snowflake
 
 import scala.Predef._
 import scala.{Boolean, Byte, StringContext, Unit, List}
+import scala.concurrent.ExecutionContext
+import java.util.concurrent.Executors
 
 import quasar.api.destination.{Destination, DestinationType, ResultSink}
 import quasar.api.push.RenderConfig
 import quasar.api.resource._
 import quasar.api.table.{ColumnType, TableColumn}
+import quasar.concurrent.NamedDaemonThreadFactory
 import quasar.connector.{MonadResourceErr, ResourceError}
 
 import cats.effect._
@@ -48,7 +51,7 @@ import scalaz.NonEmptyList
 
 import shims._
 
-final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer](
+final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer: ContextShift](
   xa: Transactor[F],
   identCfg: SanitizeIdentifiers) extends Destination[F] with Logging {
   def destinationType: DestinationType =
@@ -73,6 +76,11 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
     (fr0"rm @~/" ++ Fragment.const(fileName)) // no risk of injection here since this is fresh name
       .query[Unit].stream.transact(xa).compile.drain
 
+  private val blocker: Blocker =
+    Blocker.liftExecutionContext(
+      ExecutionContext.fromExecutor(
+        Executors.newCachedThreadPool(NamedDaemonThreadFactory("snowflake-destination"))))
+
   private def doPush(
     path: ResourcePath,
     columns: List[TableColumn],
@@ -88,7 +96,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       _ <- debug(s"Starting staging to file: @~/$freshName")
 
       _ <- Stream.eval(
-        Sync[F].delay(connection.uploadStream("@~", "/", inputStream, freshName, Compressed)))
+        blocker.delay[F, Unit](connection.uploadStream("@~", "/", inputStream, freshName, Compressed)))
 
       _ <- debug(s"Finished staging to file: @~/$freshName")
 
