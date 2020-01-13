@@ -34,5 +34,5 @@ lazy val core = project
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
     libraryDependencies ++= Seq(
-      "org.specs2" %% "specs2-core" % "4.7.1" % Test))
+      "org.specs2" %% "specs2-core" % "4.8.3" % Test))
   .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
