@@ -22,7 +22,7 @@ import scala._
 import quasar.api.destination.DestinationError.InitializationError
 import quasar.api.destination.{Destination, DestinationError, DestinationType}
 import quasar.connector.{DestinationModule, MonadResourceErr}
-import quasar.concurrent.NamedDaemonThreadFactory
+import quasar.{ concurrent => qt}
 
 import java.sql.SQLException
 import java.util.concurrent.Executors
@@ -119,14 +119,14 @@ object SnowflakeDestinationModule extends DestinationModule {
       Sync[F].delay(
         Executors.newFixedThreadPool(
           threadCount,
-          NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
+          qt.NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
       .map(ExecutionContext.fromExecutor(_))
 
-  private def unboundedPool[F[_]: Sync](name: String): Resource[F, ExecutionContext] =
+  private def unboundedPool[F[_]: Sync](name: String): Resource[F, Blocker] =
     Resource.make(
       Sync[F].delay(
         Executors.newCachedThreadPool(
-          NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
-      .map(ExecutionContext.fromExecutor(_))
+          qt.NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
+      .map(es => qt.Blocker(ExecutionContext.fromExecutor(es)))
 
 }
