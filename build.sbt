@@ -11,7 +11,7 @@ lazy val publishTestsSettings = Seq(
   Test / packageBin / publishArtifact := true)
 
 lazy val QuasarVersion = IO.read(file("./quasar-version")).trim
-val DoobieVersion = "0.7.0"
+val DoobieVersion = "0.8.8"
 
 lazy val root = project
   .in(file("."))
@@ -30,7 +30,7 @@ lazy val core = project
     quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
     quasarPluginDependencies ++= Seq(
       "org.slf4s" %% "slf4s-api" % "1.7.25",
-      "net.snowflake" % "snowflake-jdbc" % "3.10.1",
+      "net.snowflake" % "snowflake-jdbc" % "3.11.1",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
     libraryDependencies ++= Seq(
