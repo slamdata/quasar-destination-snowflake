@@ -17,14 +17,14 @@
 package quasar.destination.snowflake
 
 import scala.Predef._
-import scala.{Boolean, Byte, StringContext, Unit, List}
+import scala.{Boolean, Byte, StringContext, Unit}
 import scala.concurrent.ExecutionContext
 import java.util.concurrent.Executors
 
-import quasar.api.destination.{Destination, DestinationType, ResultSink}
+import quasar.api.destination.{LegacyDestination, DestinationColumn, DestinationType, ResultSink}
 import quasar.api.push.RenderConfig
 import quasar.api.resource._
-import quasar.api.table.{ColumnType, TableColumn}
+import quasar.api.table.ColumnType
 import quasar.concurrent.NamedDaemonThreadFactory
 import quasar.connector.{MonadResourceErr, ResourceError}
 
@@ -47,22 +47,19 @@ import net.snowflake.client.jdbc.SnowflakeConnection
 
 import pathy.Path, Path.FileName
 
-import scalaz.NonEmptyList
-
-import shims._
-
 final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer: ContextShift](
-  xa: Transactor[F],
-  identCfg: SanitizeIdentifiers) extends Destination[F] with Logging {
+    xa: Transactor[F],
+    identCfg: SanitizeIdentifiers) extends LegacyDestination[F] with Logging {
+
   def destinationType: DestinationType =
     SnowflakeDestinationModule.destinationType
 
-  def sinks: NonEmptyList[ResultSink[F]] =
-    NonEmptyList(csvSink)
+  def sinks: NonEmptyList[ResultSink[F, Type]] =
+    NonEmptyList.one(csvSink)
 
   private val Compressed: Boolean = true
 
-  private val csvSink: ResultSink[F] = ResultSink.csv[F](RenderConfig.Csv()) {
+  private val csvSink: ResultSink[F, Type] = ResultSink.csv[F, Type](RenderConfig.Csv()) {
     case (path, columns, bytes) =>
       Stream.force(
         for {
@@ -82,10 +79,10 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
         Executors.newCachedThreadPool(NamedDaemonThreadFactory("snowflake-destination"))))
 
   private def doPush(
-    path: ResourcePath,
-    columns: List[TableColumn],
-    bytes: Stream[F, Byte],
-    freshName: String)
+      path: ResourcePath,
+      columns: NonEmptyList[DestinationColumn[Type]],
+      bytes: Stream[F, Byte],
+      freshName: String)
       : Stream[F, Unit] =
     for {
       fileName <- Stream.eval(ensureSingleSegment(path))
@@ -100,13 +97,9 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
       _ <- debug(s"Finished staging to file: @~/$freshName")
 
-      cols0 <- columns.toNel.fold[Stream[F, NonEmptyList[TableColumn]]](
-        Stream.raiseError[F](new Exception("No columns specified")))(
-        _.asScalaz.pure[Stream[F, ?]])
-
-      cols <- cols0.traverse(mkColumn(_)).fold(
+      cols <- columns.traverse(mkColumn(_)).fold(
         errs => Stream.raiseError[F](
-          new Exception(s"Some column types are not supported: ${mkErrorString(errs.asScalaz)}")),
+          new Exception(s"Some column types are not supported: ${mkErrorString(errs)}")),
         c => Stream(c).covaryAll[F, NonEmptyList[Fragment]])
 
       tableQuery = createTableQuery(fileName.value, cols).query[String]
@@ -157,7 +150,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       Fragment.const(QueryGen.sanitizeIdentifier(tableName, identCfg))) ++
       Fragments.parentheses(columns.intercalate(fr", "))
 
-  private def mkColumn(c: TableColumn): ValidatedNel[ColumnType.Scalar, Fragment] =
+  private def mkColumn(c: DestinationColumn[Type]): ValidatedNel[ColumnType.Scalar, Fragment] =
     columnTypeToSnowflake(c.tpe)
       .map(Fragment.const(QueryGen.sanitizeIdentifier(c.name, identCfg)) ++ _)
 
