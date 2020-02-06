@@ -127,7 +127,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       Fragment.const(QueryGen.sanitizeIdentifier(tableName, identCfg)) ++
       fr0" FROM @~/" ++
       Fragment.const(fileToLoad) ++ // no risk of injection here since this is fresh name
-      fr"""file_format = (type = csv, skip_header = 1, field_optionally_enclosed_by = '"')"""
+      fr"""file_format = (type = csv, skip_header = 1, field_optionally_enclosed_by = '"', escape_unenclosed_field = none, escape = '\\')"""
   }
 
   private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
