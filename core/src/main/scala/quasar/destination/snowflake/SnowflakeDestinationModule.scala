@@ -20,9 +20,10 @@ import scala.Predef._
 import scala._
 
 import quasar.api.destination.DestinationError.InitializationError
-import quasar.api.destination.{Destination, DestinationError, DestinationType}
-import quasar.connector.{DestinationModule, MonadResourceErr}
-import quasar.{ concurrent => qt}
+import quasar.api.destination.{DestinationError, DestinationType}
+import quasar.connector.MonadResourceErr
+import quasar.connector.destination.{Destination, DestinationModule}
+import quasar.{concurrent => qt}
 
 import java.sql.SQLException
 import java.util.concurrent.Executors

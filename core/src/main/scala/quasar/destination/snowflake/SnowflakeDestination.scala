@@ -21,12 +21,13 @@ import scala.{Boolean, Byte, StringContext, Unit}
 import scala.concurrent.ExecutionContext
 import java.util.concurrent.Executors
 
-import quasar.api.destination.{LegacyDestination, DestinationColumn, DestinationType, ResultSink}
-import quasar.api.push.RenderConfig
+import quasar.api.{Column, ColumnType}
+import quasar.api.destination.DestinationType
 import quasar.api.resource._
-import quasar.api.table.ColumnType
 import quasar.concurrent.NamedDaemonThreadFactory
 import quasar.connector.{MonadResourceErr, ResourceError}
+import quasar.connector.destination.{LegacyDestination, ResultSink}
+import quasar.connector.render.RenderConfig
 
 import cats.effect._
 import cats.data._
@@ -59,7 +60,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
   private val Compressed: Boolean = true
 
-  private val csvSink: ResultSink[F, Type] = ResultSink.csv[F, Type](RenderConfig.Csv()) {
+  private val csvSink: ResultSink[F, Type] = ResultSink.create[F, Type](RenderConfig.Csv()) {
     case (path, columns, bytes) =>
       Stream.force(
         for {
@@ -80,7 +81,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
   private def doPush(
       path: ResourcePath,
-      columns: NonEmptyList[DestinationColumn[Type]],
+      columns: NonEmptyList[Column[Type]],
       bytes: Stream[F, Byte],
       freshName: String)
       : Stream[F, Unit] =
@@ -150,7 +151,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       Fragment.const(QueryGen.sanitizeIdentifier(tableName, identCfg))) ++
       Fragments.parentheses(columns.intercalate(fr", "))
 
-  private def mkColumn(c: DestinationColumn[Type]): ValidatedNel[ColumnType.Scalar, Fragment] =
+  private def mkColumn(c: Column[Type]): ValidatedNel[ColumnType.Scalar, Fragment] =
     columnTypeToSnowflake(c.tpe)
       .map(Fragment.const(QueryGen.sanitizeIdentifier(c.name, identCfg)) ++ _)
 
