@@ -12,7 +12,6 @@ scmInfo in ThisBuild := Some(ScmInfo(
 lazy val publishTestsSettings = Seq(
   Test / packageBin / publishArtifact := true)
 
-lazy val QuasarVersion = IO.read(file("./quasar-version")).trim
 val DoobieVersion = "0.8.8"
 
 lazy val root = project
@@ -28,7 +27,7 @@ lazy val core = project
     performMavenCentralSync := false,
     publishAsOSSProject := true,
     quasarPluginName := "snowflake",
-    quasarPluginQuasarVersion := QuasarVersion,
+    quasarPluginQuasarVersion := managedVersions.value("slamdata-quasar"),
     quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
     quasarPluginDependencies ++= Seq(
       "org.slf4s" %% "slf4s-api" % "1.7.25",
