@@ -32,7 +32,7 @@ lazy val core = project
     quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
     quasarPluginDependencies ++= Seq(
       "org.slf4s" %% "slf4s-api" % "1.7.25",
-      "net.snowflake" % "snowflake-jdbc" % "3.11.1",
+      "net.snowflake" % "snowflake-jdbc" % "3.12.4",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
     libraryDependencies ++= Seq(
