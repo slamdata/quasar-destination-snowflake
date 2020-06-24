@@ -42,8 +42,6 @@ import doobie._
 import doobie.implicits._
 import doobie.hikari.HikariTransactor
 
-import eu.timepit.refined.auto._
-
 import scalaz.NonEmptyList
 
 object SnowflakeDestinationModule extends DestinationModule {
