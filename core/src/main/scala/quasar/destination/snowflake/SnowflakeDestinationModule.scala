@@ -22,7 +22,7 @@ import scala._
 import quasar.api.destination.DestinationError.InitializationError
 import quasar.api.destination.{DestinationError, DestinationType}
 import quasar.connector.MonadResourceErr
-import quasar.connector.destination.{Destination, DestinationModule}
+import quasar.connector.destination.{Destination, DestinationModule, PushmiPullyu}
 import quasar.{concurrent => qt}
 
 import java.sql.SQLException
@@ -57,7 +57,9 @@ object SnowflakeDestinationModule extends DestinationModule {
       cfg.copy(user = User(Redacted), password = Password(Redacted)).asJson)
 
   def destination[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
-    config: Json): Resource[F, Either[InitializationError[Json], Destination[F]]] =
+      config: Json,
+      pushPull: PushmiPullyu[F])
+      : Resource[F, Either[InitializationError[Json], Destination[F]]] =
     (for {
       cfg <- EitherT.fromEither[Resource[F, ?]](config.as[SnowflakeConfig].result) leftMap {
         case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
