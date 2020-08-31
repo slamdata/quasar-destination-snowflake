@@ -60,15 +60,18 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
 
   private val Compressed: Boolean = true
 
-  private val csvSink: ResultSink[F, Type] = ResultSink.create[F, Type](RenderConfig.Csv()) {
-    case (path, columns, bytes) =>
-      Stream.force(
-        for {
-          freshNameSuffix <- Sync[F].delay(UUID.randomUUID().toString)
-          freshName = s"reform-$freshNameSuffix"
-          push = doPush(path, columns, bytes, freshName).onFinalize(removeFile(freshName))
-        } yield push)
-  }
+  private val csvSink: ResultSink[F, Type] =
+    ResultSink.create[F, Type, Byte] { (path, columns) =>
+      val pipe: Pipe[F, Byte, Unit] =
+        bytes => Stream.force(
+          for {
+            freshNameSuffix <- Sync[F].delay(UUID.randomUUID().toString)
+            freshName = s"reform-$freshNameSuffix"
+            push = doPush(path, columns, bytes, freshName).onFinalize(removeFile(freshName))
+          } yield push)
+
+      (RenderConfig.Csv(), pipe)
+    }
 
   private def removeFile(fileName: String): F[Unit] =
     (fr0"rm @~/" ++ Fragment.const(fileName)) // no risk of injection here since this is fresh name
