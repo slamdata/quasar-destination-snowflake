@@ -23,7 +23,7 @@ import quasar.api.destination.DestinationError.InitializationError
 import quasar.api.destination.{DestinationError, DestinationType}
 import quasar.connector.MonadResourceErr
 import quasar.connector.destination.{Destination, DestinationModule, PushmiPullyu}
-import quasar.{concurrent => qt}
+import quasar.concurrent._
 
 import java.sql.SQLException
 import java.util.concurrent.Executors
@@ -66,7 +66,7 @@ object SnowflakeDestinationModule extends DestinationModule {
       }
       poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
       connectPool <- EitherT.right(boundedPool[F](s"snowflake-dest-connect-$poolSuffix", PoolSize))
-      transactPool <- EitherT.right(unboundedPool[F](s"snowflake-dest-transact-$poolSuffix"))
+      transactPool <- EitherT.right(Blocker.cached[F](s"snowflake-dest-transact-$poolSuffix"))
 
       jdbcUri = SnowflakeConfig.configToUri(cfg)
 
@@ -120,14 +120,6 @@ object SnowflakeDestinationModule extends DestinationModule {
       Sync[F].delay(
         Executors.newFixedThreadPool(
           threadCount,
-          qt.NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
+          NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
       .map(ExecutionContext.fromExecutor(_))
-
-  private def unboundedPool[F[_]: Sync](name: String): Resource[F, Blocker] =
-    Resource.make(
-      Sync[F].delay(
-        Executors.newCachedThreadPool(
-          qt.NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
-      .map(es => qt.Blocker(ExecutionContext.fromExecutor(es)))
-
 }
