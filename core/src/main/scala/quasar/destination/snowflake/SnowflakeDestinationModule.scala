@@ -1,5 +1,5 @@
 /*
- * Copyright 2014–2019 SlamData Inc.
+ * Copyright 2020 Precog Data
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ import scala.Predef._
 import scala._
 
 import quasar.api.destination.DestinationError.InitializationError
-import quasar.api.destination.{Destination, DestinationError, DestinationType}
-import quasar.connector.{DestinationModule, MonadResourceErr}
-import quasar.concurrent.NamedDaemonThreadFactory
+import quasar.api.destination.{DestinationError, DestinationType}
+import quasar.connector.MonadResourceErr
+import quasar.connector.destination.{Destination, DestinationModule, PushmiPullyu}
+import quasar.concurrent._
 
 import java.sql.SQLException
 import java.util.concurrent.Executors
@@ -41,8 +42,6 @@ import doobie._
 import doobie.implicits._
 import doobie.hikari.HikariTransactor
 
-import eu.timepit.refined.auto._
-
 import scalaz.NonEmptyList
 
 object SnowflakeDestinationModule extends DestinationModule {
@@ -58,14 +57,16 @@ object SnowflakeDestinationModule extends DestinationModule {
       cfg.copy(user = User(Redacted), password = Password(Redacted)).asJson)
 
   def destination[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
-    config: Json): Resource[F, Either[InitializationError[Json], Destination[F]]] =
+      config: Json,
+      pushPull: PushmiPullyu[F])
+      : Resource[F, Either[InitializationError[Json], Destination[F]]] =
     (for {
       cfg <- EitherT.fromEither[Resource[F, ?]](config.as[SnowflakeConfig].result) leftMap {
         case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
       }
       poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
       connectPool <- EitherT.right(boundedPool[F](s"snowflake-dest-connect-$poolSuffix", PoolSize))
-      transactPool <- EitherT.right(unboundedPool[F](s"snowflake-dest-transact-$poolSuffix"))
+      transactPool <- EitherT.right(Blocker.cached[F](s"snowflake-dest-transact-$poolSuffix"))
 
       jdbcUri = SnowflakeConfig.configToUri(cfg)
 
@@ -121,12 +122,4 @@ object SnowflakeDestinationModule extends DestinationModule {
           threadCount,
           NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
       .map(ExecutionContext.fromExecutor(_))
-
-  private def unboundedPool[F[_]: Sync](name: String): Resource[F, ExecutionContext] =
-    Resource.make(
-      Sync[F].delay(
-        Executors.newCachedThreadPool(
-          NamedDaemonThreadFactory(name))))(es => Sync[F].delay(es.shutdown()))
-      .map(ExecutionContext.fromExecutor(_))
-
 }

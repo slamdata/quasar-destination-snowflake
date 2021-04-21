@@ -1,5 +1,5 @@
 /*
- * Copyright 2014–2019 SlamData Inc.
+ * Copyright 2020 Precog Data
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,5 +64,5 @@ object SnowflakeConfig {
     )("accountName", "user", "password", "databaseName", "schema", "warehouse", "sanitizeIdentifiers")
 
   def configToUri(config: SnowflakeConfig): String =
-    s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/?db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}"
+    s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/?db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}&CLIENT_SESSION_KEEP_ALIVE=true"
 }

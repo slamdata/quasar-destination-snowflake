@@ -1,23 +1,25 @@
 import scala.collection.Seq
 
-homepage in ThisBuild := Some(url("https://github.com/slamdata/quasar-destination-snowflake"))
+ThisBuild / scalaVersion := "2.12.10"
+
+ThisBuild / githubRepository := "quasar-destination-snowflake"
+
+homepage in ThisBuild := Some(url("https://github.com/precog/quasar-destination-snowflake"))
 
 scmInfo in ThisBuild := Some(ScmInfo(
-  url("https://github.com/slamdata/quasar-destination-snowflake"),
-  "scm:git@github.com:slamdata/quasar-destination-snowflake.git"))
+  url("https://github.com/precog/quasar-destination-snowflake"),
+  "scm:git@github.com:precog/quasar-destination-snowflake.git"))
 
 // Include to also publish a project's tests
 lazy val publishTestsSettings = Seq(
   Test / packageBin / publishArtifact := true)
 
-lazy val QuasarVersion = IO.read(file("./quasar-version")).trim
-val DoobieVersion = "0.7.0"
+val DoobieVersion = "0.8.8"
 
 lazy val root = project
   .in(file("."))
   .settings(noPublishSettings)
   .aggregate(core)
-  .enablePlugins(AutomateHeaderPlugin)
 
 lazy val core = project
   .in(file("core"))
@@ -26,13 +28,13 @@ lazy val core = project
     performMavenCentralSync := false,
     publishAsOSSProject := true,
     quasarPluginName := "snowflake",
-    quasarPluginQuasarVersion := QuasarVersion,
+    quasarPluginQuasarVersion := managedVersions.value("precog-quasar"),
     quasarPluginDestinationFqcn := Some("quasar.destination.snowflake.SnowflakeDestinationModule$"),
     quasarPluginDependencies ++= Seq(
       "org.slf4s" %% "slf4s-api" % "1.7.25",
-      "net.snowflake" % "snowflake-jdbc" % "3.10.1",
+      "net.snowflake" % "snowflake-jdbc" % "3.12.4",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
     libraryDependencies ++= Seq(
       "org.specs2" %% "specs2-core" % "4.8.3" % Test))
-  .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
+  .enablePlugins(QuasarPlugin)
