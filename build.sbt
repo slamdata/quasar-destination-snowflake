@@ -36,5 +36,6 @@ lazy val core = project
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
       "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
     libraryDependencies ++= Seq(
+      "com.precog" %% "quasar-lib-jdbc" % managedVersions.value("precog-quasar-lib-jdbc"),
       "org.specs2" %% "specs2-core" % "4.8.3" % Test))
   .enablePlugins(QuasarPlugin)

@@ -42,6 +42,8 @@ import doobie._
 import doobie.implicits._
 import doobie.hikari.HikariTransactor
 
+import org.slf4s.LoggerFactory
+
 import scalaz.NonEmptyList
 
 object SnowflakeDestinationModule extends DestinationModule {
@@ -59,8 +61,8 @@ object SnowflakeDestinationModule extends DestinationModule {
   def destination[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
       config: Json,
       pushPull: PushmiPullyu[F])
-      : Resource[F, Either[InitializationError[Json], Destination[F]]] =
-    (for {
+      : Resource[F, Either[InitializationError[Json], Destination[F]]] = {
+    val init = for {
       cfg <- EitherT.fromEither[Resource[F, ?]](config.as[SnowflakeConfig].result) leftMap {
         case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
       }
@@ -81,8 +83,17 @@ object SnowflakeDestinationModule extends DestinationModule {
 
       _ <- isLive(transactor, config)
 
-      destination: Destination[F] = new SnowflakeDestination[F](transactor, cfg.sanitizeIdentifiers)
-    } yield destination).value
+      logger <- EitherT.right[InitializationError[Json]]{
+        Resource.liftF(Sync[F].delay(LoggerFactory(s"quasar.lib.destination.snowflake-$poolSuffix")))
+      }
+
+    } yield new SnowflakeDestination(
+      transactor,
+      cfg.sanitizeIdentifiers,
+      logger): Destination[F]
+
+    init.value
+  }
 
   private def isLive[F[_]: Sync](xa: Transactor[F], config: Json)
       : EitherT[Resource[F, ?], InitializationError[Json], Unit] = {
