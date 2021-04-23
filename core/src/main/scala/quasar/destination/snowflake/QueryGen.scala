@@ -22,8 +22,8 @@ import scala.util.matching.Regex
 
 object QueryGen {
   // we should eventually move the query generation code here to make it more testable
-  def sanitizeIdentifier(str: String, cfg: SanitizeIdentifiers): String =
-    if (cfg.value)
+  def sanitizeIdentifier(str: String, cfg: Boolean): String =
+    if (cfg)
       // replace all non-alphanumeric characters with _ and make all characters uppercase
       (new Regex("""(\W)""")).replaceAllIn(str, "_").toUpperCase
     else

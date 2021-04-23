@@ -39,7 +39,9 @@ import pathy.Path, Path.FileName
 
 final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer: ContextShift](
     xa: Transactor[F],
-    identCfg: SanitizeIdentifiers,
+    writeMode: WriteMode,
+    schema: String,
+    identCfg: Boolean,
     logger: Logger)
     extends LegacyDestination[F]
     with FlowSinks[F, ColumnType.Scalar, Byte] {
@@ -50,7 +52,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
   private val Compressed: Boolean = true
 
   def flowResource(args: FlowArgs[ColumnType.Scalar]): Resource[F, Flow[Byte]] =
-    ???
+    TempTableFlow(xa, logger, writeMode, schema, identCfg, args)
 
   def render(args: FlowArgs[ColumnType.Scalar]) = RenderConfig.Csv()
 

@@ -24,6 +24,7 @@ import quasar.api.destination.{DestinationError, DestinationType}
 import quasar.connector.MonadResourceErr
 import quasar.connector.destination.{Destination, DestinationModule, PushmiPullyu}
 import quasar.concurrent._
+import quasar.lib.jdbc.destination.WriteMode
 
 import java.sql.SQLException
 import java.util.concurrent.Executors
@@ -56,7 +57,7 @@ object SnowflakeDestinationModule extends DestinationModule {
 
   def sanitizeDestinationConfig(config: Json): Json =
     config.as[SnowflakeConfig].result.fold(_ => Json.jEmptyObject, cfg =>
-      cfg.copy(user = User(Redacted), password = Password(Redacted)).asJson)
+      cfg.copy(user = Redacted, password = Redacted).asJson)
 
   def destination[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
       config: Json,
@@ -76,8 +77,8 @@ object SnowflakeDestinationModule extends DestinationModule {
         HikariTransactor.newHikariTransactor[F](
           SnowflakeDriverFqcn,
           jdbcUri,
-          cfg.user.value,
-          cfg.password.value,
+          cfg.user,
+          cfg.password,
           connectPool,
           transactPool))
 
@@ -89,7 +90,9 @@ object SnowflakeDestinationModule extends DestinationModule {
 
     } yield new SnowflakeDestination(
       transactor,
-      cfg.sanitizeIdentifiers,
+      cfg.writeMode.getOrElse(WriteMode.Replace),
+      cfg.schema,
+      cfg.sanitizeIdentifiers.getOrElse(true),
       logger): Destination[F]
 
     init.value
