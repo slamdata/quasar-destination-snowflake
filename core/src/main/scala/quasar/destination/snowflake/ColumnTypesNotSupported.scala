@@ -16,18 +16,11 @@
 
 package quasar.destination.snowflake
 
-import org.specs2.mutable.Specification
+import slamdata.Predef._
 
-object QueryGenSpec extends Specification {
-  "SanitizeIdentifiers = false" >> {
-    "quotes identifiers and removes double quotes" >> {
-      QueryGen.sanitizeIdentifier("includes \" spaces", false) must_== """"includes  spaces""""
-    }
-  }
+import cats.data.NonEmptyList
 
-  "SanitizeIdentifiers = true" >> {
-    "quotes identifiers, makes everything uppercase and removes double quotes" >> {
-      QueryGen.sanitizeIdentifier("? foo>>bar123 ;;", true) must_== "__FOO__BAR123___"
-    }
-  }
-}
+import quasar.api.ColumnType
+
+final case class ColumnTypesNotSupported(types: NonEmptyList[ColumnType.Scalar]) extends RuntimeException(
+  s"The snowflake destination does not support the following column types: ${types.toList.distinct.mkString(", ")}")

@@ -34,8 +34,11 @@ lazy val core = project
       "org.slf4s" %% "slf4s-api" % "1.7.25",
       "net.snowflake" % "snowflake-jdbc" % "3.12.4",
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
-      "org.tpolecat" %% "doobie-hikari" % DoobieVersion),
-    libraryDependencies ++= Seq(
+      "org.tpolecat" %% "doobie-hikari" % DoobieVersion,
+      "com.github.tototoshi" %% "scala-csv" % "1.3.6" % Test,
       "com.precog" %% "quasar-lib-jdbc" % managedVersions.value("precog-quasar-lib-jdbc"),
-      "org.specs2" %% "specs2-core" % "4.8.3" % Test))
+      "com.precog" %% "quasar-foundation" % quasarPluginQuasarVersion.value,
+      "com.precog" %% "quasar-foundation" % quasarPluginQuasarVersion.value % "test->test" classifier "tests",
+      "org.specs2" %% "specs2-core" % "4.9.4" % Test))
   .enablePlugins(QuasarPlugin)
+  .evictToLocal("QUASAR_LIB_JDBC_PATH", "core", true)

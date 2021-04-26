@@ -28,11 +28,9 @@ import quasar.lib.jdbc.Slf4sLogHandler
 import quasar.lib.jdbc.destination.WriteMode
 import quasar.lib.jdbc.destination.flow.{Flow, FlowArgs}
 
-import cats.Alternative
-import cats.data.{Validated, NonEmptyList, ValidatedNel}
+import cats.data.{NonEmptyList, ValidatedNel}
 import cats.effect._
 import cats.effect.concurrent.Ref
-import cats.effect.syntax.bracket._
 import cats.implicits._
 
 import doobie._
@@ -54,7 +52,7 @@ object TempTableFlow {
       logger: Logger,
       writeMode: WriteMode,
       schema: String,
-      identCfg: Boolean,
+      hygienicIdent: String => String,
       args: FlowArgs[ColumnType.Scalar])
       : Resource[F, Flow[Byte]] = {
 
@@ -87,9 +85,9 @@ object TempTableFlow {
         case file /: ResourcePath.Root => file.pure[F]
         case _ => MonadResourceErr[F].raiseError(ResourceError.notAResource(args.path))
       }
-      columnFragments <- args.columns.traverse(mkColumn(identCfg, _)).fold(
+      columnFragments <- args.columns.traverse(mkColumn(hygienicIdent, _)).fold(
         errs => Sync[F].raiseError {
-          new Exception(s"Some column types are not supported: ${mkErrorString(errs)}")
+          ColumnTypesNotSupported(errs)
         },
         _.pure[F])
       _ <- checkWriteMode(tbl)
@@ -102,7 +100,7 @@ object TempTableFlow {
         schema,
         args.columns,
         columnFragments,
-        identCfg,
+        hygienicIdent,
         args.filterColumn)
       _ <- {
         tempTable.drop >>
@@ -120,8 +118,7 @@ object TempTableFlow {
 
         def ingest(chunk: Chunk[Byte]): ConnectionIO[Unit] = for {
           conn <- connection
-          file <- StageFile(chunk, conn, blocker).use(tempTable.ingest)
-          _ <- commit
+          _ <- StageFile(chunk, conn, blocker).evalMap(tempTable.ingest).use(x => commit)
         } yield ()
 
         def replace: ConnectionIO[Unit] = refMode.get flatMap {
@@ -162,60 +159,59 @@ object TempTableFlow {
         schema: String,
         columns: NonEmptyList[Column[ColumnType.Scalar]],
         columnFragments: NonEmptyList[Fragment],
-        identCfg: Boolean,
+        hygienicIdent: String => String,
         filterColumn: Option[Column[_]])
         : TempTable = {
-      val tmpFragment = fr""
-      val tgtFragment = fr""
 
-      def createTgt = {
-        val fragment = fr"CREATE TABLE" ++ tgtFragment ++
+      val tmpName = s"precog_tmp_$tableName"
+      val tmpFragment = Fragment.const0(hygienicIdent(schema)) ++ fr0"." ++ Fragment.const0(hygienicIdent(tmpName))
+      val tgtFragment = Fragment.const0(hygienicIdent(schema)) ++ fr0"." ++ Fragment.const0(hygienicIdent(tableName))
+
+      def runFragment: Fragment => ConnectionIO[Unit] = { fr =>
+        fr.updateWithLogHandler(log).run.void
+      }
+
+      def createTgt = runFragment {
+        fr"CREATE TABLE" ++ tgtFragment ++
           Fragments.parentheses(columnFragments.intercalate(fr","))
-        fragment.updateWithLogHandler(log).run.void
       }
 
-      def createTgtIfNotExists = {
-        val fragment = fr"CREATE TABLE IF NOT EXISTS" ++ tgtFragment ++
+      def createTgtIfNotExists = runFragment {
+        fr"CREATE TABLE IF NOT EXISTS" ++ tgtFragment ++
           Fragments.parentheses(columnFragments.intercalate(fr","))
-        fragment.updateWithLogHandler(log).run.void
       }
 
-      def dropTgtIfExists = {
-        val fragment = fr"DROP TABLE IF EXISTS" ++ tgtFragment
-        fragment.updateWithLogHandler(log).run.void
+      def dropTgtIfExists = runFragment {
+        fr"DROP TABLE IF EXISTS" ++ tgtFragment
       }
 
-      def truncateTgt = {
-        val fragment = fr"TRUNCATE" ++ tgtFragment
-        fragment.updateWithLogHandler(log).run.void
+      def truncateTgt = runFragment {
+        fr"TRUNCATE" ++ tgtFragment
       }
 
 
-      def truncate = {
-        val fragment = fr"TRUNCATE" ++ tmpFragment
-        fragment.updateWithLogHandler(log).run.void
+      def truncate = runFragment {
+        fr"TRUNCATE" ++ tmpFragment
       }
 
-      def rename = {
-        val fragment = fr"ALTER TABLE" ++ tmpFragment ++ fr" RENAME TO" ++
-          Fragment.const0(QueryGen.sanitizeIdentifier(tableName, identCfg))
-
-        fragment.updateWithLogHandler(log).run.void
+      def rename = runFragment {
+        fr"ALTER TABLE" ++ tmpFragment ++ fr" RENAME TO" ++ tgtFragment
       }
 
       new TempTable {
-        def ingest(stageFile: StageFile): ConnectionIO[Unit] =
-          println("TODO").pure[ConnectionIO]
-
-        def drop: ConnectionIO[Unit] = {
-          val fragment = fr"DROP TABLE IF EXISTS" ++ tmpFragment
-          fragment.updateWithLogHandler(log).run.void
+        def ingest(stageFile: StageFile): ConnectionIO[Unit] = runFragment {
+          fr"COPY INTO" ++ tmpFragment ++ fr0" FROM @~/" ++
+          stageFile.fragment ++
+          fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none)"""
         }
 
-        def create: ConnectionIO[Unit] = {
-          val fragment = fr"CREATE TABLE IF NOT EXISTS" ++ tmpFragment ++
+        def drop: ConnectionIO[Unit] = runFragment {
+          fr"DROP TABLE IF EXISTS" ++ tmpFragment
+        }
+
+        def create: ConnectionIO[Unit] = runFragment {
+          fr"CREATE TABLE IF NOT EXISTS" ++ tmpFragment ++
             Fragments.parentheses(columnFragments.intercalate(fr","))
-          fragment.updateWithLogHandler(log).run.void
         }
 
         // This might be something like filterColumn.fold(insertInto)(merge)
@@ -223,28 +219,24 @@ object TempTableFlow {
           filterColumn.traverse_(filter(_)) >>
           insertInto
 
-        def filter(column: Column[_]): ConnectionIO[Unit] = {
+        def filter(column: Column[_]): ConnectionIO[Unit] = runFragment {
           val mkColumn: String => Fragment = parent =>
             Fragment.const0(parent) ++ fr0"." ++
-            Fragment.const0(QueryGen.sanitizeIdentifier(column.name, identCfg))
+            Fragment.const0(hygienicIdent(column.name))
 
-          val fragment =
-            fr"DELETE FROM" ++ tgtFragment ++ fr"target" ++
-            fr"USING" ++ tmpFragment ++ fr"temp" ++
-            fr"WHERE" ++ mkColumn("target") ++ fr0"=" ++ mkColumn("temp")
-
-          fragment.updateWithLogHandler(log).run.void
+          fr"DELETE FROM" ++ tgtFragment ++ fr" target" ++
+          fr"USING" ++ tmpFragment ++ fr" temp" ++
+          fr"WHERE" ++ mkColumn("target") ++ fr0"=" ++ mkColumn("temp")
         }
 
-        def insertInto: ConnectionIO[Unit] = {
-          val fragment = fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++
+        def insertInto: ConnectionIO[Unit] = runFragment {
+          fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++
             fr"SELECT * FROM" ++ tmpFragment
-
-          fragment.updateWithLogHandler(log).run.void
         }
 
         def persist: ConnectionIO[Unit] = writeMode match {
           case WriteMode.Create =>
+
             createTgt >>
             append
           case WriteMode.Replace =>
@@ -272,13 +264,10 @@ object TempTableFlow {
       ExecutionContext.fromExecutor(
         Executors.newCachedThreadPool(NamedDaemonThreadFactory("snowflake-destination"))))
 
-  private def mkColumn(identCfg: Boolean, c: Column[ColumnType.Scalar])
+  private def mkColumn(hygienicIdent: String => String, c: Column[ColumnType.Scalar])
       : ValidatedNel[ColumnType.Scalar, Fragment] =
     columnTypeToSnowflake(c.tpe)
-      .map(Fragment.const(QueryGen.sanitizeIdentifier(c.name, identCfg)) ++ _)
-
-  private def mkErrorString(errs: NonEmptyList[ColumnType.Scalar]): String =
-    errs.map(_.show).intercalate(", ")
+      .map(Fragment.const(hygienicIdent(c.name)) ++ _)
 
   private def columnTypeToSnowflake(ct: ColumnType.Scalar)
       : ValidatedNel[ColumnType.Scalar, Fragment] =

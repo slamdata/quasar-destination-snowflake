@@ -48,32 +48,38 @@ import org.slf4s.LoggerFactory
 import scalaz.NonEmptyList
 
 object SnowflakeDestinationModule extends DestinationModule {
+
+  type InitErr = InitializationError[Json]
+
   def destinationType: DestinationType =
     DestinationType("snowflake", 1L)
 
   val SnowflakeDriverFqcn = "net.snowflake.client.jdbc.SnowflakeDriver"
-  val Redacted = "<REDACTED>"
   val PoolSize: Int = 10
 
   def sanitizeDestinationConfig(config: Json): Json =
-    config.as[SnowflakeConfig].result.fold(_ => Json.jEmptyObject, cfg =>
-      cfg.copy(user = Redacted, password = Redacted).asJson)
+    config.as[SnowflakeConfig].result.fold(_ => Json.jEmptyObject, cfg => cfg.sanitize.asJson)
 
   def destination[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
       config: Json,
       pushPull: PushmiPullyu[F])
-      : Resource[F, Either[InitializationError[Json], Destination[F]]] = {
+      : Resource[F, Either[InitErr, Destination[F]]] = {
+
+
     val init = for {
       cfg <- EitherT.fromEither[Resource[F, ?]](config.as[SnowflakeConfig].result) leftMap {
-        case (err, _) => DestinationError.malformedConfiguration((destinationType, config, err))
+        case (err, _) => DestinationError.malformedConfiguration((
+          destinationType,
+          sanitizeDestinationConfig(config),
+          err))
       }
       poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
       connectPool <- EitherT.right(boundedPool[F](s"snowflake-dest-connect-$poolSuffix", PoolSize))
       transactPool <- EitherT.right(Blocker.cached[F](s"snowflake-dest-transact-$poolSuffix"))
 
-      jdbcUri = SnowflakeConfig.configToUri(cfg)
+      jdbcUri = cfg.jdbcUri
 
-      transactor <- EitherT.right[InitializationError[Json]](
+      transactor <- EitherT.right[InitErr](
         HikariTransactor.newHikariTransactor[F](
           SnowflakeDriverFqcn,
           jdbcUri,
@@ -87,19 +93,26 @@ object SnowflakeDestinationModule extends DestinationModule {
       logger <- EitherT.right[InitializationError[Json]]{
         Resource.liftF(Sync[F].delay(LoggerFactory(s"quasar.lib.destination.snowflake-$poolSuffix")))
       }
+    } yield {
+      val hygienicIdent: String => String = inp =>
+        QueryGen.sanitizeIdentifier(inp, cfg.sanitizeIdentifiers.getOrElse(true))
 
-    } yield new SnowflakeDestination(
-      transactor,
-      cfg.writeMode.getOrElse(WriteMode.Replace),
-      cfg.schema,
-      cfg.sanitizeIdentifiers.getOrElse(true),
-      logger): Destination[F]
+      new SnowflakeDestination(
+        transactor,
+        cfg.writeMode.getOrElse(WriteMode.Replace),
+        cfg.schema.getOrElse("public"),
+        hygienicIdent,
+        cfg.retryTransactionTimeout,
+        cfg.maxRetries,
+        logger): Destination[F]
+    }
 
     init.value
   }
 
+
   private def isLive[F[_]: Sync](xa: Transactor[F], config: Json)
-      : EitherT[Resource[F, ?], InitializationError[Json], Unit] = {
+      : EitherT[Resource[F, ?], InitErr, Unit] = {
     val MER = MonadError[Resource[F, ?], Throwable]
 
     MER.attemptT(fr0"SELECT current_version()"
@@ -107,16 +120,16 @@ object SnowflakeDestinationModule extends DestinationModule {
 
       case (ex: SQLException) if ex.getErrorCode === ErrorCode.AccessDenied =>
         DestinationError.accessDenied(
-          (destinationType, config, ex.getSQLState)).pure[Resource[F, ?]]
+          (destinationType, sanitizeDestinationConfig(config), ex.getSQLState)).pure[Resource[F, ?]]
 
       case (ex: SQLException) if ex.getErrorCode === ErrorCode.ConnectionFailed =>
         DestinationError.connectionFailed(
-          (destinationType, config, ex)).pure[Resource[F, ?]]
+          (destinationType, sanitizeDestinationConfig(config), ex)).pure[Resource[F, ?]]
 
       case (ex: SQLException) =>
         DestinationError.invalidConfiguration(
           (destinationType,
-            config,
+            sanitizeDestinationConfig(config),
             NonEmptyList(ex.getMessage, ex.getErrorCode.toString, ex.getSQLState)))
           .pure[Resource[F, ?]]
 

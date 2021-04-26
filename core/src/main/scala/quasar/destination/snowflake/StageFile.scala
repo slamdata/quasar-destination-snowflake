@@ -46,7 +46,7 @@ object StageFile {
       name = s"precog-$unique"
       _ <- blocker.delay[ConnectionIO, Unit](connection.uploadStream("@~", "/", inputStream, name, Compressed))
     } yield new StageFile {
-      def fragment = Fragment.const(name)
+      def fragment = Fragment.const0(name)
     }
 
     val release: StageFile => ConnectionIO[Unit] = sf => {

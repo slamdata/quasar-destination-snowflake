@@ -21,9 +21,9 @@ import scala._
 
 import argonaut._, Argonaut._
 
-import cats.implicits._
-
 import quasar.lib.jdbc.destination.WriteMode
+
+import scala.concurrent.duration._
 
 final case class SnowflakeConfig(
   writeMode: Option[WriteMode],
@@ -31,13 +31,32 @@ final case class SnowflakeConfig(
   user: String,
   password: String,
   databaseName: String,
-  schema: String,
+  schema: Option[String],
   warehouse: String,
-  sanitizeIdentifiers: Option[Boolean])
+  sanitizeIdentifiers: Option[Boolean],
+  retryTransactionTimeoutMs: Option[Int],
+  maxTransactionReattempts: Option[Int]) { self =>
+
+  def sanitize: SnowflakeConfig =
+    self.copy(user = SnowflakeConfig.Redacted, password = SnowflakeConfig.Redacted)
+
+  val retryTransactionTimeout: FiniteDuration =
+    retryTransactionTimeoutMs.map(_.milliseconds) getOrElse SnowflakeConfig.DefaultTimeout
+
+  val maxRetries: Int =
+    maxTransactionReattempts getOrElse SnowflakeConfig.DefaultMaxReattempts
+
+  val jdbcUri: String =
+    s"jdbc:snowflake://${accountName}.snowflakecomputing.com/?db=${databaseName}&schema=${schema}&warehouse=${warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
+}
 
 object SnowflakeConfig {
+  val Redacted = "<REDACTED>"
+  val DefaultTimeout = 60.seconds
+  val DefaultMaxReattempts = 10
+
   implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
-    casecodec8(SnowflakeConfig.apply, SnowflakeConfig.unapply)(
+    casecodec10(SnowflakeConfig.apply, SnowflakeConfig.unapply)(
       "writeMode",
       "accountName",
       "user",
@@ -45,8 +64,7 @@ object SnowflakeConfig {
       "databaseName",
       "schema",
       "warehouse",
-      "sanitizeIdentifiers")
-
-  def configToUri(config: SnowflakeConfig): String =
-    s"jdbc:snowflake://${config.accountName}.snowflakecomputing.com/?db=${config.databaseName}&schema=${config.schema}&warehouse=${config.warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
+      "sanitizeIdentifiers",
+      "retryTransactionTimeoutMs",
+      "maxTransactionReattempts")
 }
