@@ -54,7 +54,7 @@ final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer
       flow.mapK(Retry[F](maxRetries, retryTimeout))
     }
 
-  def render(args: FlowArgs[ColumnType.Scalar]) = RenderConfig.Csv()
+  def render(args: FlowArgs[ColumnType.Scalar]) = RenderConfig.Csv(includeHeader = false)
 
   val flowTransactor = xa
   val flowLogger = logger
