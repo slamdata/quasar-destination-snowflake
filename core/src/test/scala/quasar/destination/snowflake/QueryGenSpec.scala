@@ -21,7 +21,7 @@ import org.specs2.mutable.Specification
 object QueryGenSpec extends Specification {
   "SanitizeIdentifiers = false" >> {
     "quotes identifiers and removes double quotes" >> {
-      QueryGen.sanitizeIdentifier("includes \" spaces", false) must_== """"includes  spaces""""
+      QueryGen.sanitizeIdentifier("includes \" spaces", false) must_== """"includes "" spaces""""
     }
   }
 

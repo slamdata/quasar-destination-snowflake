@@ -15,7 +15,10 @@ libraryDependencies += "com.precog" %% "quasar-destination-snowflake" % <version
    databaseName: String,
    user: String,
    password: String,
-   schema: String
+   schema: String,
+   retryTransactionTimeoutMs: Optional<Number>,
+   maxTransactionReattempts: Optional<Number>,
+   sanitizeIdentifiers: Option<Boolean>
 }
 ```
 
@@ -25,5 +28,9 @@ libraryDependencies += "com.precog" %% "quasar-destination-snowflake" % <version
 - `user` the user name to login into Snowflake
 - `password` the password to login into Snowflake
 - `schema` the name of the schema to use
+- `retryTransactionTimeoutMs` optional transaction retry timeout in milliseconds, default is 60000
+- `maxTransactionReattempts` optional number of retries before giving up retrying, default is 10
+- `sanitizeIdentifiers` optinal, defaults to `true`. When it's `true` identifiers (table name, schema, columns)
+  are capitalized and all non-ASCII characters are replaced with `_`. If this is `false` the identifiers are
+  quoted and `"` is replaced with `""`.
 
-All fields are mandatory.

@@ -21,14 +21,13 @@ import scala._
 import scala.util.matching.Regex
 
 object QueryGen {
-  // we should eventually move the query generation code here to make it more testable
-  def sanitizeIdentifier(str: String, cfg: Boolean): String =
-    if (cfg)
+  // `snowflakeSanitation` means using more idiomatic snowflake identifiers
+  // It's uncommon to have quoted identifiers in snowflake
+  def sanitizeIdentifier(str: String, snowflakeSanitation: Boolean): String =
+    if (snowflakeSanitation)
       // replace all non-alphanumeric characters with _ and make all characters uppercase
       (new Regex("""(\W)""")).replaceAllIn(str, "_").toUpperCase
     else
-      // Double quote the string and remove any stray double quotes inside
-      // the string, they can't be part of valid identifiers in Snowflake
-      // anyway.
-      s""""${str.replace("\"", "")}""""
+      // Default PG-like sanitation
+      s""""${str.replace("\"", "\"\"")}""""
 }
