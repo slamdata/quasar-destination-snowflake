@@ -236,7 +236,6 @@ object TempTableFlow {
 
         def persist: ConnectionIO[Unit] = writeMode match {
           case WriteMode.Create =>
-
             createTgt >>
             append
           case WriteMode.Replace =>
