@@ -118,7 +118,7 @@ object TempTableFlow {
 
         def ingest(chunk: Chunk[Byte]): ConnectionIO[Unit] = for {
           conn <- connection
-          _ <- StageFile(chunk, conn, blocker).evalMap(tempTable.ingest).use(x => commit)
+          _ <- StageFile(chunk, conn, blocker, logger).evalMap(tempTable.ingest).use(x => commit)
         } yield ()
 
         def replace: ConnectionIO[Unit] = refMode.get flatMap {
@@ -202,7 +202,7 @@ object TempTableFlow {
         def ingest(stageFile: StageFile): ConnectionIO[Unit] = runFragment {
           fr"COPY INTO" ++ tmpFragment ++ fr0" FROM @~/" ++
           stageFile.fragment ++
-          fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none)"""
+          fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none, escape_unenclosed_field = none)"""
         }
 
         def drop: ConnectionIO[Unit] = runFragment {

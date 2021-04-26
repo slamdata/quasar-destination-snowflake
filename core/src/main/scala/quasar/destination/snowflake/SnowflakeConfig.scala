@@ -47,13 +47,15 @@ final case class SnowflakeConfig(
     maxTransactionReattempts getOrElse SnowflakeConfig.DefaultMaxReattempts
 
   val jdbcUri: String =
-    s"jdbc:snowflake://${accountName}.snowflakecomputing.com/?db=${databaseName}&schema=${schema}&warehouse=${warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
+    s"${SnowflakeConfig.SnowflakeUriSchema}://${accountName}.${SnowflakeConfig.SnowflakeDomain}/?db=${databaseName}&schema=${schema}&warehouse=${warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
 }
 
 object SnowflakeConfig {
   val Redacted = "<REDACTED>"
   val DefaultTimeout = 60.seconds
   val DefaultMaxReattempts = 10
+  val SnowflakeUriSchema = "jdbc:snowflake"
+  val SnowflakeDomain = "snowflakecomputing.com"
 
   implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
     casecodec10(SnowflakeConfig.apply, SnowflakeConfig.unapply)(

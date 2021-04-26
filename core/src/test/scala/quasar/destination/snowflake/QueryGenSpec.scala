@@ -19,15 +19,15 @@ package quasar.destination.snowflake
 import org.specs2.mutable.Specification
 
 object QueryGenSpec extends Specification {
-  "SanitizeIdentifiers = false" >> {
-    "quotes identifiers and removes double quotes" >> {
+  "snowflakeSanitation = false" >> {
+    "wraps with double quotes and escape double quotes with double quotes" >> {
       QueryGen.sanitizeIdentifier("includes \" spaces", false) must_== """"includes "" spaces""""
     }
   }
 
-  "SanitizeIdentifiers = true" >> {
-    "quotes identifiers, makes everything uppercase and removes double quotes" >> {
-      QueryGen.sanitizeIdentifier("? foo>>bar123 ;;", true) must_== "__FOO__BAR123___"
+  "snowflakeSanitation = true" >> {
+    "makes everything uppercase and replace all non-ASCII characters with underscores" >> {
+      QueryGen.sanitizeIdentifier("? foo>>bar123 \";;", true) must_== "__FOO__BAR123____"
     }
   }
 }

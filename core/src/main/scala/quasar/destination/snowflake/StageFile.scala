@@ -29,6 +29,7 @@ import fs2._
 import java.io.ByteArrayInputStream
 import java.util.UUID
 import net.snowflake.client.jdbc.SnowflakeConnection
+import org.slf4s.Logger
 
 sealed trait StageFile {
   def fragment: Fragment
@@ -37,20 +38,26 @@ sealed trait StageFile {
 object StageFile {
   private val Compressed = true
 
-  def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker)
+  def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker, logger: Logger)
       : Resource[ConnectionIO, StageFile] = {
     val inputStream = new ByteArrayInputStream(input.toBytes.values)
+    val debug = (s: String) => Sync[ConnectionIO].delay {
+      logger.debug(s)
+    }
 
     val acquire: ConnectionIO[StageFile] = for {
       unique <- Sync[ConnectionIO].delay(UUID.randomUUID.toString)
       name = s"precog-$unique"
+      _ <- debug(s"Starting staging to file: @~/$name")
       _ <- blocker.delay[ConnectionIO, Unit](connection.uploadStream("@~", "/", inputStream, name, Compressed))
+      _ <- debug(s"Finished staging to file: @~/$name")
     } yield new StageFile {
       def fragment = Fragment.const0(name)
     }
 
     val release: StageFile => ConnectionIO[Unit] = sf => {
       val fragment = fr0"rm @~/" ++ sf.fragment
+      debug("Cleaning staging file @~/$name up") >>
       fragment.query[Unit].option.void
     }
 

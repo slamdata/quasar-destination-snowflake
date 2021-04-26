@@ -8,17 +8,17 @@ libraryDependencies += "com.precog" %% "quasar-destination-snowflake" % <version
 
 ## Configuration
 
-```json
+```
 {
-   accountName: String,
-   warehouse: String,
-   databaseName: String,
-   user: String,
-   password: String,
-   schema: String,
-   retryTransactionTimeoutMs: Optional<Number>,
-   maxTransactionReattempts: Optional<Number>,
-   sanitizeIdentifiers: Option<Boolean>
+   "accountName": String,
+   "warehouse": String,
+   "databaseName": String,
+   "user": String,
+   "password": String,
+   "schema": String,
+   "retryTransactionTimeoutMs": Optional<Number>,
+   "maxTransactionReattempts": Optional<Number>,
+   "sanitizeIdentifiers": Option<Boolean>
 }
 ```
 
