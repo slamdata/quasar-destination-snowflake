@@ -21,48 +21,52 @@ import scala._
 
 import argonaut._, Argonaut._
 
-import cats.implicits._
+import quasar.lib.jdbc.destination.WriteMode
 
-final case class AccountName(value: String)
-final case class User(value: String)
-final case class Password(value: String)
-final case class DatabaseName(value: String)
-final case class Schema(value: String)
-final case class Warehouse(value: String)
-
-final case class SanitizeIdentifiers(value: Boolean)
+import scala.concurrent.duration._
 
 final case class SnowflakeConfig(
-  accountName: AccountName,
-  user: User,
-  password: Password,
-  databaseName: DatabaseName,
-  schema: Schema,
-  warehouse: Warehouse,
-  sanitizeIdentifiers: SanitizeIdentifiers)
+  writeMode: Option[WriteMode],
+  accountName: String,
+  user: String,
+  password: String,
+  databaseName: String,
+  schema: Option[String],
+  warehouse: String,
+  sanitizeIdentifiers: Option[Boolean],
+  retryTransactionTimeoutMs: Option[Int],
+  maxTransactionReattempts: Option[Int]) { self =>
+
+  def sanitize: SnowflakeConfig =
+    self.copy(user = SnowflakeConfig.Redacted, password = SnowflakeConfig.Redacted)
+
+  val retryTransactionTimeout: FiniteDuration =
+    retryTransactionTimeoutMs.map(_.milliseconds) getOrElse SnowflakeConfig.DefaultTimeout
+
+  val maxRetries: Int =
+    maxTransactionReattempts getOrElse SnowflakeConfig.DefaultMaxReattempts
+
+  val jdbcUri: String =
+    s"${SnowflakeConfig.SnowflakeUriSchema}://${accountName}.${SnowflakeConfig.SnowflakeDomain}/?db=${databaseName}&schema=${schema}&warehouse=${warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
+}
 
 object SnowflakeConfig {
-  implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
-    casecodec7[String, String, String, String, Option[String], String, Option[Boolean], SnowflakeConfig](
-      (an, usr, pass, dbName, schema, wh, sanitize) =>
-        SnowflakeConfig(
-          AccountName(an),
-          User(usr),
-          Password(pass),
-          DatabaseName(dbName),
-          Schema(schema.getOrElse("public")),
-          Warehouse(wh),
-          sanitize.map(SanitizeIdentifiers(_)).getOrElse(SanitizeIdentifiers(true))),
-      cfg =>
-        (cfg.accountName.value,
-          cfg.user.value,
-          cfg.password.value,
-          cfg.databaseName.value,
-          cfg.schema.value.some,
-          cfg.warehouse.value,
-          cfg.sanitizeIdentifiers.value.some).some
-    )("accountName", "user", "password", "databaseName", "schema", "warehouse", "sanitizeIdentifiers")
+  val Redacted = "<REDACTED>"
+  val DefaultTimeout = 60.seconds
+  val DefaultMaxReattempts = 10
+  val SnowflakeUriSchema = "jdbc:snowflake"
+  val SnowflakeDomain = "snowflakecomputing.com"
 
-  def configToUri(config: SnowflakeConfig): String =
-    s"jdbc:snowflake://${config.accountName.value}.snowflakecomputing.com/?db=${config.databaseName.value}&schema=${config.schema.value}&warehouse=${config.warehouse.value}&CLIENT_SESSION_KEEP_ALIVE=true"
+  implicit val snowflakeConfigCodecJson: CodecJson[SnowflakeConfig] =
+    casecodec10(SnowflakeConfig.apply, SnowflakeConfig.unapply)(
+      "writeMode",
+      "accountName",
+      "user",
+      "password",
+      "databaseName",
+      "schema",
+      "warehouse",
+      "sanitizeIdentifiers",
+      "retryTransactionTimeoutMs",
+      "maxTransactionReattempts")
 }

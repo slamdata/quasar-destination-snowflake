@@ -16,7 +16,10 @@
 
 package quasar.destination.snowflake
 
+import slamdata.Predef._
+
 import argonaut._, Argonaut._
+import quasar.lib.jdbc.destination.WriteMode
 
 import org.specs2.mutable.Specification
 
@@ -30,57 +33,23 @@ object SnowflakeConfigSpec extends Specification {
         "databaseName" := "db name",
         "schema" := "public",
         "warehouse" := "warehouse name",
-        "sanitizeIdentifiers" := "false")
+        "sanitizeIdentifiers" := "false",
+        "retryTransactionTimeoutMs" := 1000,
+        "maxTransactionReattempts" := 20)
+
 
       testConfig.as[SnowflakeConfig].result must beRight(
         SnowflakeConfig(
-          AccountName("foo"),
-          User("bar"),
-          Password("secret password"),
-          DatabaseName("db name"),
-          Schema("public"),
-          Warehouse("warehouse name"),
-          SanitizeIdentifiers(false)))
-    }
-
-    "defaults 'sanitizeIdentifiers' to true when not specified" >> {
-      val testConfig = Json.obj(
-        "accountName" := "foo",
-        "user" := "bar",
-        "password" := "secret password",
-        "databaseName" := "db name",
-        "schema" := "public",
-        "warehouse" := "warehouse name")
-
-      testConfig.as[SnowflakeConfig].result must beRight(
-        SnowflakeConfig(
-          AccountName("foo"),
-          User("bar"),
-          Password("secret password"),
-          DatabaseName("db name"),
-          Schema("public"),
-          Warehouse("warehouse name"),
-          SanitizeIdentifiers(true)))
-    }
-
-    "defaults 'schema' to 'public' when not specified" >> {
-      val testConfig = Json.obj(
-        "accountName" := "foo",
-        "user" := "bar",
-        "password" := "secret password",
-        "databaseName" := "db name",
-        "warehouse" := "warehouse name",
-        "sanitizeIdentifiers" := "true")
-
-      testConfig.as[SnowflakeConfig].result must beRight(
-        SnowflakeConfig(
-          AccountName("foo"),
-          User("bar"),
-          Password("secret password"),
-          DatabaseName("db name"),
-          Schema("public"),
-          Warehouse("warehouse name"),
-          SanitizeIdentifiers(true)))
+          None,
+          "foo",
+          "bar",
+          "secret password",
+          "db name",
+          Some("public"),
+          "warehouse name",
+          Some(false),
+          Some(1000),
+          Some(20)))
     }
   }
 
@@ -88,16 +57,19 @@ object SnowflakeConfigSpec extends Specification {
     "does not include user/password or username in connection string" >> {
       val testConfig =
         SnowflakeConfig(
-          AccountName("foo"),
-          User("bar"),
-          Password("secret"),
-          DatabaseName("db name"),
-          Schema("public"),
-          Warehouse("warehouse name"),
-          SanitizeIdentifiers(true))
+          Some(WriteMode.Create),
+          "foo",
+          "bar",
+          "secret",
+          "db name",
+          Some("public"),
+          "warehouse name",
+          Some(true),
+          None,
+          None)
 
-      SnowflakeConfig.configToUri(testConfig).contains("secret") must beFalse
-      SnowflakeConfig.configToUri(testConfig).contains("bar") must beFalse
+      testConfig.jdbcUri.contains("secret") must beFalse
+      testConfig.jdbcUri.contains("bar") must beFalse
     }
   }
 }
