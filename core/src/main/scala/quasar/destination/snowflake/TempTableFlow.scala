@@ -189,7 +189,6 @@ object TempTableFlow {
         fr"TRUNCATE" ++ tgtFragment
       }
 
-
       def truncate = runFragment {
         fr"TRUNCATE" ++ tmpFragment
       }
@@ -230,8 +229,14 @@ object TempTableFlow {
         }
 
         def insertInto: ConnectionIO[Unit] = runFragment {
-          fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++
-            fr"SELECT * FROM" ++ tmpFragment
+          val colFragments = columns.map { (col: Column[_]) =>
+            Fragment.const0(hygienicIdent(col.name))
+          }
+          val allColumns = colFragments.intercalate(fr",")
+          val toInsert = Fragments.parentheses(allColumns)
+
+          fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++ toInsert ++ fr0" " ++
+          fr"SELECT" ++ allColumns ++ fr" FROM" ++ tmpFragment
         }
 
         def persist: ConnectionIO[Unit] = writeMode match {
