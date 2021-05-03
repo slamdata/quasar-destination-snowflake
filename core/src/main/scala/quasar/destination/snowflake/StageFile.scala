@@ -55,7 +55,11 @@ object StageFile {
 
     for {
       rq <- Ref.of[F, Option[StageFileState[F]]](None)
-      semaphore <- Semaphore[F](1)
+      // This is acquired by uploaind process, ensuring that we don't do anything in `done` until
+      // stage file is uploaded
+      doneSemaphore <- Semaphore[F](1)
+      // This ensures that we call only one ingest or done simultaneously
+      uniqueSemaphore <- Semaphore[F](1)
     } yield {
       def getOrStart: F[StageFileState[F]] = rq.get flatMap {
         case Some(q) => q.pure[F]
@@ -64,12 +68,9 @@ object StageFile {
           unique <- Sync[F].delay(UUID.randomUUID.toString)
           name = s"precog_$unique"
           state = StageFileState(q, name)
+          _ <- rq.set(state.some)
           _ <- ConcurrentEffect[F].start {
-            semaphore.withPermit {
-              // setting stage should be guarded, we prevent resetting stage in done here
-              // until whole input stream is consumed.
-              // In fact we could move `rq.set` out of semaphore and `ConcurrentEffect.start`
-              rq.set(state.some) >>
+            doneSemaphore.withPermit {
               debug(s"Starting staging to file: @~/$name") >>
               io.toInputStreamResource(q.dequeue.unNoneTerminate.flatMap(Stream.chunk(_))).use({ is =>
                 blocker.delay[F, Unit](connection.uploadStream("@~", "/", is, name, Compressed))
@@ -80,20 +81,27 @@ object StageFile {
         } yield state
       }
       new StageFile[F] {
-        def ingest(c: Chunk[Byte]): F[Unit] =
+        def ingest(c: Chunk[Byte]): F[Unit] = uniqueSemaphore withPermit {
           getOrStart.flatMap(_.q.enqueue1(c.some))
-        def done: Resource[F, Option[Fragment]] = Resource.liftF(rq.get) flatMap { _.traverse { state =>
-          val acquire =
-            state.q.enqueue1(None) >>
-            semaphore.withPermit(rq.set(None)) as
-            Fragment.const0(state.name)
-          val release: Fragment => F[Unit] = sf => {
-            val fragment = fr0"rm @~/" ++ sf
-            debug("Cleaning staging file @~/$name up") >>
-            fragment.query[Unit].option.void.transact(xa)
-          }
-          Resource.make(acquire)(release)
-        }}
+        }
+        def done: Resource[F, Option[Fragment]] = {
+          val uniqueSemaphoreR = Resource.make(uniqueSemaphore.acquire)(x => uniqueSemaphore.release)
+          (uniqueSemaphoreR >> Resource.liftF(rq.get)) flatMap { _.traverse { state =>
+            val acquire =
+              doneSemaphore.acquire >>
+              state.q.enqueue1(None) >>
+              rq.set(None) as
+              Fragment.const0(state.name)
+
+            val release: Fragment => F[Unit] = sf => {
+              val fragment = fr0"rm @~/" ++ sf
+              debug("Cleaning staging file @~/$name up") >>
+              fragment.query[Unit].option.void.transact(xa)
+              doneSemaphore.release
+            }
+            Resource.make(acquire)(release)
+          }}
+        }
       }
     }
   }
