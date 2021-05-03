@@ -40,7 +40,7 @@ object StageFile {
 
   def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker, logger: Logger)
       : Resource[ConnectionIO, StageFile] = {
-    println(new String(input.toBytes.values))
+    println(s"::::::::::::::::::::::::::::::::::::\n\n${new String(input.toBytes.values)}\n::::::::::::::::::::::::::::\n\n")
     val inputStream = new ByteArrayInputStream(input.toBytes.values)
     val debug = (s: String) => Sync[ConnectionIO].delay {
       logger.debug(s)

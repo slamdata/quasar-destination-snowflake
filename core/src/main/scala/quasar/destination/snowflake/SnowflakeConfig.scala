@@ -44,7 +44,8 @@ final case class SnowflakeConfig(
     retryTransactionTimeoutMs.map(_.milliseconds) getOrElse SnowflakeConfig.DefaultTimeout
 
   val maxRetries: Int =
-    maxTransactionReattempts getOrElse SnowflakeConfig.DefaultMaxReattempts
+    0
+    //maxTransactionReattempts getOrElse SnowflakeConfig.DefaultMaxReattempts
 
   val jdbcUri: String =
     s"${SnowflakeConfig.SnowflakeUriSchema}://${accountName}.${SnowflakeConfig.SnowflakeDomain}/?db=${databaseName}&schema=${schema}&warehouse=${warehouse}&CLIENT_SESSION_KEEP_ALIVE=true&AUTOCOMMIT=false"
