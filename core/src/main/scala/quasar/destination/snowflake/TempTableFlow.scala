@@ -113,6 +113,9 @@ object TempTableFlow {
     } yield {
       val toConnectionIO = Effect.toIOK[F] andThen LiftIO.liftK[ConnectionIO]
 
+      val ingestStageFile: ConnectionIO[Unit] =
+        stageFile.done.mapK(toConnectionIO).use(_.traverse_(tempTable.ingest))
+
       val flow = new Flow[Byte] {
         def delete(ids: IdBatch): ConnectionIO[Unit] =
           ().pure[ConnectionIO]
@@ -123,15 +126,17 @@ object TempTableFlow {
         def replace: ConnectionIO[Unit] =
           refMode.get flatMap {
             case QWriteMode.Replace =>
-              stageFile.done.mapK(toConnectionIO).use(_.traverse_(tempTable.ingest)) >> commit >>
-              tempTable.persist >> commit >> refMode.set(QWriteMode.Append)
+              ingestStageFile >>
+              tempTable.persist >>
+              commit >> refMode.set(QWriteMode.Append)
             case QWriteMode.Append =>
               append
           }
 
         def append: ConnectionIO[Unit] =
-          stageFile.done.mapK(toConnectionIO).use(_.traverse(tempTable.ingest)) >> commit >>
-          tempTable.append >> commit
+          ingestStageFile >>
+          tempTable.append >>
+          commit
       }
       (tempTable, flow, stageFile)
     }

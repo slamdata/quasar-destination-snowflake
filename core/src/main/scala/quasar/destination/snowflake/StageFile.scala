@@ -80,23 +80,26 @@ object StageFile {
           }
         } yield state
       }
+      val uniqueSemaphoreR: Resource[F, Unit] =
+        Resource.make(uniqueSemaphore.acquire)(x => uniqueSemaphore.release)
+
       new StageFile[F] {
         def ingest(c: Chunk[Byte]): F[Unit] = uniqueSemaphore withPermit {
           getOrStart.flatMap(_.q.enqueue1(c.some))
         }
         def done: Resource[F, Option[Fragment]] = {
-          val uniqueSemaphoreR = Resource.make(uniqueSemaphore.acquire)(x => uniqueSemaphore.release)
           (uniqueSemaphoreR >> Resource.liftF(rq.get)) flatMap { _.traverse { state =>
             val acquire =
-              doneSemaphore.acquire >>
               state.q.enqueue1(None) >>
+              doneSemaphore.acquire >>
               rq.set(None) as
               Fragment.const0(state.name)
 
             val release: Fragment => F[Unit] = sf => {
+
               val fragment = fr0"rm @~/" ++ sf
               debug("Cleaning staging file @~/$name up") >>
-              fragment.query[Unit].option.void.transact(xa)
+              fragment.query[Unit].option.void.transact(xa) >>
               doneSemaphore.release
             }
             Resource.make(acquire)(release)
