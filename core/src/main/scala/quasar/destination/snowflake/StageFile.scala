@@ -66,6 +66,9 @@ object StageFile {
           state = StageFileState(q, name)
           _ <- ConcurrentEffect[F].start {
             semaphore.withPermit {
+              // setting stage should be guarded, we prevent resetting stage in done here
+              // until whole input stream is consumed.
+              // In fact we could move `rq.set` out of semaphore and `ConcurrentEffect.start`
               rq.set(state.some) >>
               debug(s"Starting staging to file: @~/$name") >>
               io.toInputStreamResource(q.dequeue.unNoneTerminate.flatMap(Stream.chunk(_))).use({ is =>

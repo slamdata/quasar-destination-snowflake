@@ -80,7 +80,7 @@ object TempTableFlow {
       }
     }
 
-    val acquire: F[(TempTable, Flow[Byte])] = for {
+    val acquire: F[(TempTable, Flow[Byte], StageFile[F])] = for {
       tbl <- args.path match {
         case file /: ResourcePath.Root => file.pure[F]
         case _ => MonadResourceErr[F].raiseError(ResourceError.notAResource(args.path))
@@ -112,6 +112,7 @@ object TempTableFlow {
       stageFile <- StageFile(xa, conn, blocker, logger)
     } yield {
       val toConnectionIO = Effect.toIOK[F] andThen LiftIO.liftK[ConnectionIO]
+
       val flow = new Flow[Byte] {
         def delete(ids: IdBatch): ConnectionIO[Unit] =
           ().pure[ConnectionIO]
@@ -120,21 +121,23 @@ object TempTableFlow {
           toConnectionIO(stageFile.ingest(chunk))
 
         def replace: ConnectionIO[Unit] =
-          stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >>
           refMode.get flatMap {
             case QWriteMode.Replace =>
+              stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >> commit >>
               tempTable.persist >> commit >> refMode.set(QWriteMode.Append)
             case QWriteMode.Append =>
               append
           }
 
         def append: ConnectionIO[Unit] =
+          stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >> commit >>
           tempTable.append >> commit
       }
-      (tempTable, flow)
+      (tempTable, flow, stageFile)
     }
 
-    val release: ((TempTable, _)) => F[Unit] = { case (tempTable, _) =>
+    val release: ((TempTable, _, StageFile[F])) => F[Unit] = { case (tempTable, _, stageFile) =>
+      stageFile.done.use(_ => ().pure[F]) >>
       (tempTable.drop >> commit).transact(xa)
     }
 
