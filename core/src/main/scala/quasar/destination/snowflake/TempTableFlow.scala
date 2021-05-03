@@ -47,7 +47,7 @@ import java.util.concurrent.Executors
 import net.snowflake.client.jdbc.SnowflakeConnection
 
 object TempTableFlow {
-  def apply[F[_]: Sync: MonadResourceErr](
+  def apply[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr](
       xa: Transactor[F],
       logger: Logger,
       writeMode: WriteMode,
@@ -108,25 +108,25 @@ object TempTableFlow {
         commit
       }.transact(xa)
       refMode <- Ref.in[F, ConnectionIO, QWriteMode](args.writeMode)
+      conn <- unwrap(classOf[SnowflakeConnection]).transact(xa)
+      stageFile <- StageFile(xa, conn, blocker, logger)
     } yield {
+      val toConnectionIO = Effect.toIOK[F] andThen LiftIO.liftK[ConnectionIO]
       val flow = new Flow[Byte] {
         def delete(ids: IdBatch): ConnectionIO[Unit] =
           ().pure[ConnectionIO]
 
-        def connection: ConnectionIO[SnowflakeConnection] =
-          unwrap(classOf[SnowflakeConnection])
+        def ingest(chunk: Chunk[Byte]): ConnectionIO[Unit] =
+          toConnectionIO(stageFile.ingest(chunk))
 
-        def ingest(chunk: Chunk[Byte]): ConnectionIO[Unit] = for {
-          conn <- connection
-          _ <- StageFile(chunk, conn, blocker, logger).evalMap(tempTable.ingest).use(x => commit)
-        } yield ()
-
-        def replace: ConnectionIO[Unit] = refMode.get flatMap {
-          case QWriteMode.Replace =>
-            tempTable.persist >> commit >> refMode.set(QWriteMode.Append)
-          case QWriteMode.Append =>
-            append
-        }
+        def replace: ConnectionIO[Unit] =
+          stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >>
+          refMode.get flatMap {
+            case QWriteMode.Replace =>
+              tempTable.persist >> commit >> refMode.set(QWriteMode.Append)
+            case QWriteMode.Append =>
+              append
+          }
 
         def append: ConnectionIO[Unit] =
           tempTable.append >> commit
@@ -142,7 +142,7 @@ object TempTableFlow {
   }
 
   private trait TempTable {
-    def ingest(stageFile: StageFile): ConnectionIO[Unit]
+    def ingest(stageFile: Fragment): ConnectionIO[Unit]
     def drop: ConnectionIO[Unit]
     def create: ConnectionIO[Unit]
     def persist: ConnectionIO[Unit]
@@ -198,9 +198,9 @@ object TempTableFlow {
       }
 
       new TempTable {
-        def ingest(stageFile: StageFile): ConnectionIO[Unit] = runFragment {
+        def ingest(fragment: Fragment): ConnectionIO[Unit] = runFragment {
           fr"COPY INTO" ++ tmpFragment ++ fr0" FROM @~/" ++
-          stageFile.fragment ++
+          fragment ++
           fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none, escape_unenclosed_field = none)"""
         }
 
