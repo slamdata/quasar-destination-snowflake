@@ -123,14 +123,14 @@ object TempTableFlow {
         def replace: ConnectionIO[Unit] =
           refMode.get flatMap {
             case QWriteMode.Replace =>
-              stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >> commit >>
+              stageFile.done.mapK(toConnectionIO).use(_.traverse_(tempTable.ingest)) >> commit >>
               tempTable.persist >> commit >> refMode.set(QWriteMode.Append)
             case QWriteMode.Append =>
               append
           }
 
         def append: ConnectionIO[Unit] =
-          stageFile.done.mapK(toConnectionIO).use(tempTable.ingest) >> commit >>
+          stageFile.done.mapK(toConnectionIO).use(_.traverse(tempTable.ingest)) >> commit >>
           tempTable.append >> commit
       }
       (tempTable, flow, stageFile)

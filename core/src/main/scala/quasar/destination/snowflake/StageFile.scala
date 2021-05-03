@@ -35,7 +35,7 @@ import org.slf4s.Logger
 
 sealed trait StageFile[F[_]] {
   def ingest(chunk: Chunk[Byte]): F[Unit]
-  def done: Resource[F, Fragment]
+  def done: Resource[F, Option[Fragment]]
 }
 
 object StageFile {
@@ -82,7 +82,7 @@ object StageFile {
       new StageFile[F] {
         def ingest(c: Chunk[Byte]): F[Unit] =
           getOrStart.flatMap(_.q.enqueue1(c.some))
-        def done: Resource[F, Fragment] = Resource.liftF(getOrStart) flatMap { state =>
+        def done: Resource[F, Option[Fragment]] = Resource.liftF(rq.get) flatMap { _.traverse { state =>
           val acquire =
             state.q.enqueue1(None) >>
             semaphore.withPermit(rq.set(None)) as
@@ -93,7 +93,7 @@ object StageFile {
             fragment.query[Unit].option.void.transact(xa)
           }
           Resource.make(acquire)(release)
-        }
+        }}
       }
     }
   }
