@@ -30,6 +30,7 @@ import java.io.ByteArrayInputStream
 import java.util.UUID
 import net.snowflake.client.jdbc.SnowflakeConnection
 import org.slf4s.Logger
+import java.nio.charset.StandardCharsets
 
 sealed trait StageFile {
   def fragment: Fragment
@@ -40,13 +41,16 @@ object StageFile {
 
   def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker, logger: Logger)
       : Resource[ConnectionIO, StageFile] = {
-    println(s"::::::::::::::::::::::::::::::::::::\n\n${new String(input.toBytes.values)}\n::::::::::::::::::::::::::::\n\n")
-    val inputStream = new ByteArrayInputStream(input.toBytes.values)
+    val bytes = input.toBytes.values
+    val inputStream = new ByteArrayInputStream(bytes)
+    val msg =
+      s"::::::::::::::::::::::::::::::::::::\n\n${new String(bytes, StandardCharsets.UTF_8)}\n::::::::::::::::::::::::::::\n\n"
     val debug = (s: String) => Sync[ConnectionIO].delay {
       logger.debug(s)
     }
 
     val acquire: ConnectionIO[StageFile] = for {
+      _ <- debug(msg)
       unique <- Sync[ConnectionIO].delay(UUID.randomUUID.toString)
       name = s"precog-$unique"
       _ <- debug(s"Starting staging to file: @~/$name")
