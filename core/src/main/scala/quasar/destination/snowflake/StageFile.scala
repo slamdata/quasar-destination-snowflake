@@ -29,11 +29,9 @@ import fs2._
 import fs2.concurrent.Queue
 import fs2.io
 
-import java.io.ByteArrayInputStream
 import java.util.UUID
 import net.snowflake.client.jdbc.SnowflakeConnection
 import org.slf4s.Logger
-import java.nio.charset.StandardCharsets
 
 sealed trait StageFile[F[_]] {
   def ingest(chunk: Chunk[Byte]): F[Unit]
@@ -66,9 +64,9 @@ object StageFile {
           unique <- Sync[F].delay(UUID.randomUUID.toString)
           name = s"precog_$unique"
           state = StageFileState(q, name)
-          _ <- semaphore.withPermit {
-            rq.set(state.some) >>
-            ConcurrentEffect[F].start {
+          _ <- ConcurrentEffect[F].start {
+            semaphore.withPermit {
+              rq.set(state.some) >>
               debug(s"Starting staging to file: @~/$name") >>
               io.toInputStreamResource(q.dequeue.unNoneTerminate.flatMap(Stream.chunk(_))).use({ is =>
                 blocker.delay[F, Unit](connection.uploadStream("@~", "/", is, name, Compressed))
@@ -96,33 +94,4 @@ object StageFile {
       }
     }
   }
-/*
-  def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker, logger: Logger)
-      : Resource[ConnectionIO, StageFile] = {
-    val bytes = input.toBytes.values
-    val inputStream = new ByteArrayInputStream(bytes)
-    val msg =
-      s"::::::::::::::::::::::::::::::::::::\n\n${new String(bytes, StandardCharsets.UTF_8)}\n::::::::::::::::::::::::::::\n\n"
-    val debug = (s: String) => Sync[ConnectionIO].delay {
-      logger.debug(s)
-    }
-
-    val acquire: ConnectionIO[StageFile] = for {
-      _ <- debug(msg)
-      unique <- Sync[ConnectionIO].delay(UUID.randomUUID.toString)
-      name = s"precog-$unique"
-      _ <- blocker.delay[ConnectionIO, Unit](connection.uploadStream("@~", "/", inputStream, name, Compressed))
-    } yield new StageFile {
-      def fragment = Fragment.const0(name)
-    }
-
-    val release: StageFile => ConnectionIO[Unit] = sf => {
-      val fragment = fr0"rm @~/" ++ sf.fragment
-      debug("Cleaning staging file @~/$name up") >>
-      fragment.query[Unit].option.void
-    }
-
-    Resource.make(acquire)(release)
-  }
-  */
 }
