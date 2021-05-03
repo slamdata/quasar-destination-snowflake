@@ -201,7 +201,7 @@ object TempTableFlow {
         def ingest(stageFile: StageFile): ConnectionIO[Unit] = runFragment {
           fr"COPY INTO" ++ tmpFragment ++ fr0" FROM @~/" ++
           stageFile.fragment ++
-          fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none, escape_unenclosed_field = none)"""
+          fr""" file_format = (type = csv, compression = gzip, skip_header = 0, field_optionally_enclosed_by = '"', escape = none, escape_unenclosed_field = none)"""
         }
 
         def drop: ConnectionIO[Unit] = runFragment {
