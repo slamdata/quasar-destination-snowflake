@@ -73,7 +73,7 @@ object SnowflakeDestinationModule extends DestinationModule {
           sanitizeDestinationConfig(config),
           err))
       }
-      poolSuffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
+      poolSuffix <- EitherT.right(Resource.eval(Sync[F].delay(Random.alphanumeric.take(5).mkString)))
       connectPool <- EitherT.right(boundedPool[F](s"snowflake-dest-connect-$poolSuffix", PoolSize))
       transactPool <- EitherT.right(Blocker.cached[F](s"snowflake-dest-transact-$poolSuffix"))
 
@@ -91,7 +91,7 @@ object SnowflakeDestinationModule extends DestinationModule {
       _ <- isLive(transactor, config)
 
       logger <- EitherT.right[InitializationError[Json]]{
-        Resource.liftF(Sync[F].delay(LoggerFactory(s"quasar.lib.destination.snowflake-$poolSuffix")))
+        Resource.eval(Sync[F].delay(LoggerFactory(s"quasar.lib.destination.snowflake-$poolSuffix")))
       }
     } yield {
       val hygienicIdent: String => String = inp =>
