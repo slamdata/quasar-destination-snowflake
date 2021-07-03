@@ -19,45 +19,47 @@ package quasar.destination.snowflake
 import scala._, Predef._
 
 import cats.data.NonEmptyList
-import cats.effect.{ConcurrentEffect, Timer, Resource, ContextShift}
+import cats.effect._
 
 import doobie.Transactor
 
 import quasar.api.ColumnType
 import quasar.api.destination._
+import quasar.concurrent.NamedDaemonThreadFactory
 import quasar.connector.MonadResourceErr
 import quasar.connector.destination._
 import quasar.connector.render.RenderConfig
 import quasar.lib.jdbc.destination.WriteMode
-import quasar.lib.jdbc.destination.flow.{FlowSinks, FlowArgs, Flow, Retry}
 
 import org.slf4s.Logger
 
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
+import java.util.concurrent.Executors
+
 final class SnowflakeDestination[F[_]: ConcurrentEffect: MonadResourceErr: Timer: ContextShift](
-    xa: Transactor[F],
+    val transactor: Resource[F, Transactor[F]],
     writeMode: WriteMode,
     schema: String,
     hygienicIdent: String => String,
     retryTimeout: FiniteDuration,
     maxRetries: Int,
-    logger: Logger)
-    extends LegacyDestination[F]
-    with FlowSinks[F, ColumnType.Scalar, Byte] {
+    val logger: Logger)
+    extends Flow.Sinks[F] with LegacyDestination[F] {
 
   def destinationType: DestinationType =
     SnowflakeDestinationModule.destinationType
 
-  def flowResource(args: FlowArgs[ColumnType.Scalar]): Resource[F, Flow[Byte]] =
-    TempTableFlow(xa, logger, writeMode, schema, hygienicIdent, args) map { (flow: Flow[Byte]) =>
-      flow.mapK(Retry[F](maxRetries, retryTimeout))
-    }
+  def blocker: Blocker =
+    Blocker.liftExecutionContext(
+      ExecutionContext.fromExecutor(
+        Executors.newCachedThreadPool(NamedDaemonThreadFactory("snowflake-destination"))))
 
-  def render(args: FlowArgs[ColumnType.Scalar]) = RenderConfig.Csv(includeHeader = false)
+  def tableBuilder(args: Flow.Args, xa: Transactor[F], logger: Logger): Resource[F, TempTable.Builder[F]] =
+    Resource.eval(TempTable.builder[F](writeMode, schema, hygienicIdent, args, xa, logger))
 
-  val flowTransactor = xa
-  val flowLogger = logger
+  def render: RenderConfig[Byte] = RenderConfig.Csv(includeHeader = false)
 
   val sinks: NonEmptyList[ResultSink[F, ColumnType.Scalar]] =
     flowSinks

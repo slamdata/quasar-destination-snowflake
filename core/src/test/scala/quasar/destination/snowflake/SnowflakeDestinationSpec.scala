@@ -82,7 +82,7 @@ object SnowflakeDestinationSpec extends EffectfulQSpec[IO] with CsvSupport {
     Account.isEmpty || Password.isEmpty || User.isEmpty || Database.isEmpty || Schema.isEmpty || Warehouse.isEmpty
 
   skipAllIf(shouldSkip)
-
+  //sequential
   "initialization" should {
     "fail with malformed config when not decodable" >>* {
       val cfg = Json("malformed" := true)
@@ -93,17 +93,6 @@ object SnowflakeDestinationSpec extends EffectfulQSpec[IO] with CsvSupport {
             c must_=== jEmptyObject
 
           case _ => ko("Expected a malformed configuration")
-      }})
-    }
-
-    "fail when unable to connect to database" >>* {
-      val cfg = config.copy(accountName = "incorrect").asJson
-
-      dest(cfg)(r => IO.pure {
-        r match {
-          case Left(_) =>
-            ok
-          case _ => ko("Expected a connection failed or access denied")
       }})
     }
   }
@@ -457,9 +446,7 @@ object SnowflakeDestinationSpec extends EffectfulQSpec[IO] with CsvSupport {
         .attempt
         .map(_ must beLeft)
     }
-
   }
-
 
   def config: SnowflakeConfig = SnowflakeConfig(
       writeMode = None,
