@@ -63,7 +63,7 @@ object StageFile {
 
       val release: StageFile => F[Unit] = sf => {
         val fragment = fr"rm" ++ sf.fragment
-        debug(s"Cleaning staging file @~/${sf.name} up")
+        debug(s"Cleaning staging file @~/${sf.name} up") >>
         fragment.query[Unit].option.void.transact(xa)
       }
 
