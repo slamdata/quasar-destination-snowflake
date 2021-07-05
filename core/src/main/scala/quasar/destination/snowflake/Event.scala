@@ -38,26 +38,21 @@ object Event {
   // 1024 chunks is approximately 8M rows, should be OKayish for backpressure
   val QueueSize: Int = 1024
   val ResultQueueSize: Int = 256
-  // Not Gzipped
-  val MaxFileSize: Long = 64L * 1024L * 1024L * 1024L
 
   def fromDataEvent[F[_]: Concurrent, A]: Pipe[F, DataEvent[Byte, A], Event[F, A]] = {
     def flush(
         elqRef: Ref[F, Option[Queue[F, Option[Chunk[Byte]]]]],
-        resQ: Queue[F, Option[Event[F, A]]],
-        elqSize: Ref[F, Long])
+        resQ: Queue[F, Option[Event[F, A]]])
         : F[Unit] =
       elqRef.get.flatMap(_.traverse { q =>
         q.enqueue1(None)
       }) >>
-      elqRef.set(None) >>
-      elqSize.set(0L)
+      elqRef.set(None)
 
     def go(
         inp: Stream[F, DataEvent[Byte, A]],
         resQ: Queue[F, Option[Event[F, A]]],
-        elqRef: Ref[F, Option[Queue[F, Option[Chunk[Byte]]]]],
-        elqSize: Ref[F, Long])
+        elqRef: Ref[F, Option[Queue[F, Option[Chunk[Byte]]]]])
         : Stream[F, Unit] = inp evalMap {
 
       case DataEvent.Create(chunk) => elqRef.get flatMap {
@@ -66,36 +61,30 @@ object Event {
           newQ <- Queue.bounded[F, Option[Chunk[Byte]]](QueueSize)
           _ <- newQ.enqueue1(chunk.some)
           _ <- elqRef.set(newQ.some)
-          _ <- elqSize.set(chunk.size.toLong)
           _ <- resQ.enqueue1(Event.Create(newQ.dequeue.unNoneTerminate.flatMap(Stream.chunk)).some)
         } yield ()
 
-        case Some(q) => for {
-          _ <- q.enqueue1(chunk.some)
-          size <- elqSize.updateAndGet(_ + chunk.size)
-          // I.e. we don't have more then 8M rows and files are sliced per 64G
-          _ <- flush(elqRef, resQ, elqSize).whenA(size > MaxFileSize)
-        } yield ()
+        case Some(q) =>
+          q.enqueue1(chunk.some)
       }
 
       case DataEvent.Delete(ids) =>
         ().pure[F]
 
       case DataEvent.Commit(offset) =>
-        flush(elqRef, resQ, elqSize) >>
+        flush(elqRef, resQ) >>
         resQ.enqueue1(Event.Commit(offset).some)
     }
 
     inp => for {
       resQ <- Stream.eval(Queue.bounded[F, Option[Event[F, A]]](ResultQueueSize))
       elqRef <- Stream.eval(Ref.of[F, Option[Queue[F, Option[Chunk[Byte]]]]](None))
-      elqSize <- Stream.eval(Ref.of[F, Long](0L))
       results <- resQ.dequeue.unNoneTerminate.concurrently {
         val inpWithFinalizer = inp.onFinalize {
           elqRef.get.flatMap(_.traverse(_.enqueue1(None))) >>
           resQ.enqueue1(None)
         }
-        go(inpWithFinalizer, resQ, elqRef, elqSize)
+        go(inpWithFinalizer, resQ, elqRef)
       }
     } yield results
   }
