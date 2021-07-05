@@ -108,7 +108,6 @@ object TempTable {
         fr""" file_format = (type = csv, skip_header = 0, field_optionally_enclosed_by = '"', escape = none, escape_unenclosed_field = none)"""
 
       def runFragment: Fragment => ConnectionIO[Unit] = { fr =>
-        println(fr).pure[ConnectionIO] >>
         fr.updateWithLogHandler(log).run.void
       }
 
