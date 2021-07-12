@@ -40,6 +40,8 @@ import doobie.hikari.HikariTransactor
 
 import org.slf4s.LoggerFactory
 
+import java.util.concurrent.Executors
+
 object SnowflakeDestinationModule extends DestinationModule {
 
   type InitErr = InitializationError[Json]
@@ -95,11 +97,17 @@ object SnowflakeDestinationModule extends DestinationModule {
         hygienicIdent,
         cfg.retryTransactionTimeout,
         cfg.maxRetries,
+        blocker,
         logger): Destination[F]
     }
 
     init.value
   }
+
+  private def blocker: Blocker =
+    Blocker.liftExecutionContext(
+      ExecutionContext.fromExecutor(
+        Executors.newCachedThreadPool(NamedDaemonThreadFactory("snowflake-destination"))))
 
   private def boundedPool[F[_]: Sync](name: String, threadCount: Int): Resource[F, ExecutionContext] =
     Resource.make(

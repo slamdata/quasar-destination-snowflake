@@ -34,20 +34,22 @@ import doobie._
 import doobie.implicits._
 import doobie.free.connection.commit
 
-import fs2.Stream
+import fs2.{Pipe, Stream}
 
 import org.slf4s.Logger
 
+import net.snowflake.client.jdbc.SnowflakeConnection
+
 sealed trait TempTable[F[_]] {
-  def persist: F[Unit]
+  def ingest[A]: Pipe[F, Region[F, A], A]
 }
 
 object TempTable {
   sealed trait Builder[F[_]] {
-    def build(stages: Stream[F, StageFile]): Resource[F, TempTable[F]]
+    def build(connection: SnowflakeConnection, blocker: Blocker): Resource[F, TempTable[F]]
   }
 
-  def builder[F[_]: Sync: MonadResourceErr](
+  def builder[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr](
       writeMode: WriteMode,
       schema: String,
       hygienicIdent: String => String,
@@ -114,7 +116,7 @@ object TempTable {
       def execFragment: Fragment => F[Unit] =
         runFragment andThen (_.transact(xa))
 
-      def build(stages: Stream[F, StageFile]): Resource[F, TempTable[F]] = {
+      def build(connection: SnowflakeConnection, blocker: Blocker): Resource[F, TempTable[F]] = {
         val createFragment = {
           val prefix =
             if (writeMode === WriteMode.Replace)
@@ -130,103 +132,113 @@ object TempTable {
         val dropFragment =
           fr"DROP TABLE IF EXISTS" ++ tmpFragment
 
-        val acquire = for {
-          _ <- execFragment(createFragment)
-          stageResults <- stages.evalMap(x => execFragment(ingestFragment(x))).compile.toList
-        } yield
-          if (stageResults.isEmpty)
-            new TempTable[F] {
-              def persist = ().pure[F]
+        val tempTable =
+          new TempTable[F] {
+
+            def ingest[A]: Pipe[F, Region[F, A], A] = _.flatMap { (region: Region[F, A]) => Stream.force {
+              StageFile(region.data, connection, blocker, xa, logger) use { sf =>
+                for {
+                  size <- region.commitCount
+                  _ <- {
+                    execFragment(ingestFragment(sf)) >> persist
+                  }.whenA(size > 0)
+                } yield region.commits
+              }
+            }}
+
+            def persist = refMode.get flatMap {
+              case QWriteMode.Replace =>
+                persist0 >> refMode.set(QWriteMode.Append)
+              case QWriteMode.Append =>
+                append.transact(xa)
             }
-          else {
-            new TempTable[F] {
-              def persist = refMode.get flatMap {
-                case QWriteMode.Replace =>
-                  persist0 >> refMode.set(QWriteMode.Append)
-                case QWriteMode.Append =>
-                  append.transact(xa)
+
+            def persist0: F[Unit] = xa.trans.apply {
+              writeMode match {
+                case WriteMode.Create =>
+                  createTgt >>
+                  append
+                case WriteMode.Replace =>
+                  dropTgtIfExists >>
+                  rename >>
+                  recreate
+                case WriteMode.Truncate =>
+                  createTgtIfNotExists >>
+                  commit >>
+                  truncateTgt >>
+                  append
+                case WriteMode.Append =>
+                  createTgtIfNotExists >>
+                  commit >>
+                  append
               }
+            }
 
-              def persist0: F[Unit] = xa.trans.apply {
-                writeMode match {
-                  case WriteMode.Create =>
-                    createTgt >>
-                    append
-                  case WriteMode.Replace =>
-                    dropTgtIfExists >>
-                    rename
-                  case WriteMode.Truncate =>
-                    createTgtIfNotExists >>
-                    commit >>
-                    truncateTgt >>
-                    append
-                  case WriteMode.Append =>
-                    createTgtIfNotExists >>
-                    commit >>
-                    append
-                }
+            def recreate: ConnectionIO[Unit] = runFragment {
+              fr"CREATE TEMP TABLE" ++ tmpFragment ++ createColumnFragment
+            }
+
+            def append: ConnectionIO[Unit] = args.idColumn match {
+              case None =>
+                insert
+              case Some(col) =>
+                delete(col.name) >>
+                insert
+            }
+
+            def prefixedColumns(prefix: Fragment) = {
+              val colFragments = args.columns.map { (col: Column[_]) =>
+                prefix ++ Fragment.const0(hygienicIdent(col.name))
               }
+              colFragments.intercalate(fr",")
+            }
 
-              def append: ConnectionIO[Unit] = args.idColumn match {
-                case None =>
-                  insert
-                case Some(col) =>
-                  delete(col.name) >>
-                  insert
-              }
+            val allColumns =
+              prefixedColumns(fr0"")
 
-              def prefixedColumns(prefix: Fragment) = {
-                val colFragments = args.columns.map { (col: Column[_]) =>
-                  prefix ++ Fragment.const0(hygienicIdent(col.name))
-                }
-                colFragments.intercalate(fr",")
-              }
+            def insert: ConnectionIO[Unit] = runFragment {
+              fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++ Fragments.parentheses(allColumns) ++ fr0" " ++
+              fr"SELECT" ++ allColumns ++ fr" FROM" ++ tmpFragment
+            }
 
-              val allColumns =
-                prefixedColumns(fr0"")
+            def delete(filterColumn: String): ConnectionIO[Unit] = runFragment {
+              val whereClause =
+                fr0"tgt." ++ Fragment.const0(filterColumn) ++
+                fr0" = " ++
+                fr0"tmp." ++ Fragment.const0(filterColumn) ++ fr0" "
 
-              def insert: ConnectionIO[Unit] = runFragment {
-                fr"INSERT INTO" ++ tgtFragment ++ fr0" " ++ Fragments.parentheses(allColumns) ++ fr0" " ++
-                fr"SELECT" ++ allColumns ++ fr" FROM" ++ tmpFragment
-              }
+              fr"DELETE FROM" ++ tgtFragment ++ fr" tgt" ++
+              fr"USING" ++ tmpFragment ++ fr" tmp" ++
+              fr"WHERE" ++ whereClause
+            }
 
-              def delete(filterColumn: String): ConnectionIO[Unit] = runFragment {
-                val whereClause =
-                  fr0"tgt." ++ Fragment.const0(filterColumn) ++
-                  fr0" = " ++
-                  fr0"tmp." ++ Fragment.const0(filterColumn) ++ fr0" "
+            def createTgt = runFragment {
+              fr"CREATE TABLE" ++ tgtFragment ++ createColumnFragment
+            }
 
-                fr"DELETE FROM" ++ tgtFragment ++ fr" tgt" ++
-                fr"USING" ++ tmpFragment ++ fr" tmp" ++
-                fr"WHERE" ++ whereClause
-              }
+            def dropTgtIfExists = runFragment {
+              fr"DROP TABLE IF EXISTS" ++ tgtFragment
+            }
 
-              def createTgt = runFragment {
-                fr"CREATE TABLE" ++ tgtFragment ++ createColumnFragment
-              }
+            def truncateTgt = runFragment {
+              fr"TRUNCATE" ++ tgtFragment
+            }
 
-              def dropTgtIfExists = runFragment {
-                fr"DROP TABLE IF EXISTS" ++ tgtFragment
-              }
+            def createTgtIfNotExists = runFragment {
+              fr"CREATE TABLE IF NOT EXISTS" ++ tgtFragment ++ createColumnFragment
+            }
 
-              def truncateTgt = runFragment {
-                fr"TRUNCATE" ++ tgtFragment
-              }
-
-              def createTgtIfNotExists = runFragment {
-                fr"CREATE TABLE IF NOT EXISTS" ++ tgtFragment ++ createColumnFragment
-              }
-
-              def rename = runFragment {
-                fr"ALTER TABLE" ++ tmpFragment ++ fr" RENAME TO" ++ tgtFragment
-              }
+            def rename = runFragment {
+              fr"ALTER TABLE" ++ tmpFragment ++ fr" RENAME TO" ++ tgtFragment
             }
           }
 
           val release: TempTable[F] => F[Unit] = _ =>
             Sync[F].defer(execFragment(dropFragment))
 
-          Resource.make(acquire)(release)
+          Resource.make(tempTable.pure[F])(release) evalMap { t =>
+            execFragment(createFragment) as t
+          }
         }
     }
   }

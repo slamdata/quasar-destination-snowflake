@@ -93,14 +93,14 @@ object Flow {
     private def create(path: ResourcePath, cols: NonEmptyList[FlowColumn])
         : (RenderConfig[Byte], Pipe[F, Byte, Unit]) = {
       val args = Args.ofCreate(path, cols)
-      (render, in => Stream.resource {
+      (render, (in: Stream[F, Byte]) => Stream.resource {
         for {
           xa <- transactor
           connection <- Resource.eval(unwrap(classOf[SnowflakeConnection]).transact(xa))
-          stage <- StageFile[F](in, connection, blocker, xa, logger)
           builder <- tableBuilder(args, xa, logger)
-          tempTable <- builder.build(Stream(stage))
-          _ <- Resource.eval(tempTable.persist)
+          region = Region.fromByteStream(in)
+          tempTable <- builder.build(connection, blocker)
+          _ <- tempTable.ingest(Stream(region)).compile.resource.drain
         } yield ()
       })
     }
@@ -125,13 +125,11 @@ object Flow {
           xa <- transactor
           connection <- Resource.eval(unwrap(classOf[SnowflakeConnection]).transact(xa))
           builder <- tableBuilder(args, xa, logger)
+          tempTable <- builder.build(connection, blocker)
           offsets <- Resource.eval(Queue.unbounded[F, Option[OffsetKey.Actual[A]]])
-          stageStream = events
-            .through(Event.fromDataEvent[F, OffsetKey.Actual[A]])
-            .through(StageFile.eventPipe[F, OffsetKey.Actual[A]](connection, offsets, blocker, xa, logger))
-          _ <- stageStream.flatMap(x => Stream.resource(builder.build(x))).evalMap(_.persist).compile.resource.drain
-        } yield offsets.dequeue.unNoneTerminate
+        } yield events.through(Region.regionPipe).through(tempTable.ingest)
       }
+
       nestedStream.flatten
     }
   }
