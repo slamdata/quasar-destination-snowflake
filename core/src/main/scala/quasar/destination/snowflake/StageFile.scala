@@ -24,43 +24,52 @@ import cats.implicits._
 import doobie._
 import doobie.implicits._
 
-import fs2._
+import fs2.Stream
+import fs2.io
 
-import java.io.ByteArrayInputStream
 import java.util.UUID
 import net.snowflake.client.jdbc.SnowflakeConnection
 import org.slf4s.Logger
 
 sealed trait StageFile {
-  def fragment: Fragment
+  def name: String
+  def fragment = fr0"@~/" ++ Fragment.const0(name)
 }
 
 object StageFile {
   private val Compressed = true
 
-  def apply(input: Chunk[Byte], connection: SnowflakeConnection, blocker: Blocker, logger: Logger)
-      : Resource[ConnectionIO, StageFile] = {
-    val inputStream = new ByteArrayInputStream(input.toBytes.values)
-    val debug = (s: String) => Sync[ConnectionIO].delay {
-      logger.debug(s)
-    }
+  def apply[F[_]: ConcurrentEffect: ContextShift](
+      input: Stream[F, Byte],
+      connection: SnowflakeConnection,
+      blocker: Blocker,
+      xa: Transactor[F],
+      logger: Logger)
+      : Resource[F, StageFile] = {
+    val debug = (s: String) => Sync[F].delay(logger.debug(s))
 
-    val acquire: ConnectionIO[StageFile] = for {
-      unique <- Sync[ConnectionIO].delay(UUID.randomUUID.toString)
-      name = s"precog-$unique"
-      _ <- debug(s"Starting staging to file: @~/$name")
-      _ <- blocker.delay[ConnectionIO, Unit](connection.uploadStream("@~", "/", inputStream, name, Compressed))
-      _ <- debug(s"Finished staging to file: @~/$name")
+    val acquire: F[StageFile] = for {
+      unique <- Sync[F].delay(UUID.randomUUID.toString)
+      uniqueName = s"precog-$unique"
     } yield new StageFile {
-      def fragment = Fragment.const0(name)
+      def name = uniqueName
     }
 
-    val release: StageFile => ConnectionIO[Unit] = sf => {
-      val fragment = fr0"rm @~/" ++ sf.fragment
-      debug("Cleaning staging file @~/$name up") >>
-      fragment.query[Unit].option.void
+    def ingest(sf: StageFile): F[StageFile] =
+      io.toInputStreamResource(input) use { inputStream =>
+        for {
+          _ <- debug(s"Starting staging to file: @~/${sf.name}")
+          _ <- blocker.delay[F, Unit](connection.uploadStream("@~", "/", inputStream, sf.name, Compressed))
+          _ <- debug(s"Finished staging to file: @~/${sf.name}")
+        } yield sf
+      }
+
+    val release: StageFile => F[Unit] = sf => {
+      val fragment = fr"rm" ++ sf.fragment
+      debug(s"Cleaning staging file @~/${sf.name} up") >>
+      fragment.query[Unit].option.void.transact(xa)
     }
 
-    Resource.make(acquire)(release)
+    Resource.make(acquire)(release).evalMap(ingest(_))
   }
 }
